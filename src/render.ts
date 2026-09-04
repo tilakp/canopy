@@ -75,6 +75,19 @@ export function renderMindMap(
   return { camera };
 }
 
+// getBBox() on an empty <text> element has historically been flaky in some
+// WebKit versions; a zero-size fallback keeps rendering going instead of
+// throwing partway through a render.
+function safeBBox(el: SVGTextElement): DOMRect {
+  try {
+    return el.getBBox();
+  } catch {
+    const x = parseFloat(el.getAttribute("x") ?? "0");
+    const y = parseFloat(el.getAttribute("y") ?? "0");
+    return new DOMRect(x, y, 0, 0);
+  }
+}
+
 function* iterateNodes(node: MindMapNode): Generator<MindMapNode> {
   yield node;
   for (const child of node.children) yield* iterateNodes(child);
@@ -120,7 +133,7 @@ function renderRootNode(
   text.textContent = node.text;
   g.appendChild(text);
 
-  const bbox = text.getBBox();
+  const bbox = safeBBox(text);
   const halfWidth = bbox.width / 2 + ROOT_PADDING_X;
   rect.setAttribute("x", String(layout.x - halfWidth));
   rect.setAttribute("y", String(bbox.y - ROOT_PADDING_Y));
@@ -157,7 +170,7 @@ function renderLeafNode(
   text.textContent = node.text;
   g.appendChild(text);
 
-  const bbox = text.getBBox();
+  const bbox = safeBBox(text);
   hit.setAttribute("x", String(bbox.x - LEAF_PADDING_X));
   hit.setAttribute("y", String(bbox.y - LEAF_PADDING_Y));
   hit.setAttribute("width", String(bbox.width + LEAF_PADDING_X * 2));

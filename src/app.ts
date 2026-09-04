@@ -3,6 +3,8 @@ import { renderMindMap, type Camera } from "./render";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
+const DOUBLE_CLICK_MS = 400;
+const DOUBLE_CLICK_PX = 5;
 
 type DragState =
   | { type: "node"; id: string; startX: number; startY: number; startOffset: { dx: number; dy: number } }
@@ -14,6 +16,13 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   let editingId: string | null = null;
   let camera: Camera | undefined;
   let dragState: DragState = null;
+  let lastClick: { id: string; time: number; x: number; y: number } | null = null;
+
+  // Without a focused, focusable element, WKWebView's native tab-navigation
+  // can intercept the Tab key before it reaches the DOM as a keydown event.
+  // Keeping the container focused (except while an edit input is up) avoids
+  // that.
+  container.tabIndex = -1;
 
   function render(): void {
     const result = renderMindMap(
@@ -25,10 +34,12 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
           updateText(root, id, text.trim() || "Untitled");
           editingId = null;
           render();
+          container.focus();
         },
         onEditCancel() {
           editingId = null;
           render();
+          container.focus();
         },
       },
     );
@@ -43,11 +54,29 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
 
   container.addEventListener("pointerdown", (e) => {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
+    container.focus();
     if (editingId) return;
 
     const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
     if (nodeEl) {
       const id = nodeEl.dataset.nodeId!;
+
+      // Native 'dblclick' can be unreliable once setPointerCapture is in
+      // play, so double-clicks are detected here from raw pointerdowns.
+      const isDoubleClick =
+        lastClick &&
+        lastClick.id === id &&
+        e.timeStamp - lastClick.time < DOUBLE_CLICK_MS &&
+        Math.abs(e.clientX - lastClick.x) < DOUBLE_CLICK_PX &&
+        Math.abs(e.clientY - lastClick.y) < DOUBLE_CLICK_PX;
+      lastClick = { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
+
+      if (isDoubleClick) {
+        lastClick = null;
+        startEditing(id);
+        return;
+      }
+
       selectedId = id;
       if (id !== root.id) {
         const node = findNode(root, id)!;
@@ -61,6 +90,7 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       }
       render();
     } else {
+      lastClick = null;
       selectedId = null;
       dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
       render();
@@ -90,13 +120,6 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   });
   container.addEventListener("pointercancel", () => {
     dragState = null;
-  });
-
-  container.addEventListener("dblclick", (e) => {
-    const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
-    if (!nodeEl) return;
-    dragState = null;
-    startEditing(nodeEl.dataset.nodeId!);
   });
 
   container.addEventListener(
@@ -131,6 +154,15 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   });
 
   window.addEventListener("keydown", (e) => {
+    // Global safety net: Escape always exits editing, even if the edit
+    // input itself never picked up focus for some reason.
+    if (e.key === "Escape" && editingId) {
+      e.preventDefault();
+      editingId = null;
+      render();
+      container.focus();
+      return;
+    }
     if (editingId) return;
 
     if (e.key === "Tab") {
@@ -156,6 +188,7 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   });
 
   render();
+  container.focus();
 }
 
 function clamp(value: number, min: number, max: number): number {
