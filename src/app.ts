@@ -116,6 +116,20 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
     { passive: false },
   );
 
+  let lastRect = container.getBoundingClientRect();
+  window.addEventListener("resize", () => {
+    const rect = container.getBoundingClientRect();
+    if (camera) {
+      camera = {
+        ...camera,
+        x: camera.x + (rect.width - lastRect.width) / 2,
+        y: camera.y + (rect.height - lastRect.height) / 2,
+      };
+    }
+    lastRect = rect;
+    render();
+  });
+
   window.addEventListener("keydown", (e) => {
     if (editingId) return;
 
