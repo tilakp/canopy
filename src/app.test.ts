@@ -17,6 +17,10 @@ function fireKey(key: string) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
 
+function fireKeyMeta(key: string, shiftKey = false) {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, bubbles: true, cancelable: true }));
+}
+
 function pointer(el: Element, type: string, x: number, y: number) {
   el.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y }));
 }
@@ -196,5 +200,73 @@ describe("startApp interactions", () => {
 
     const after = getTransform(container);
     expect(after.scale).toBeGreaterThan(before.scale);
+  });
+
+  // Undo/redo swaps in a freshly-cloned tree internally (new object
+  // identities, same ids), so assertions here check the rendered DOM
+  // (which always reflects whatever tree is currently active) rather than
+  // the pre-existing `root`/`child` object references, which go stale the
+  // moment an undo or redo happens.
+
+  it("undoes and redoes adding a node via ⌘Z / ⌘⇧Z", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    const countLeaves = () => container.querySelectorAll(".mm-leaf").length;
+    const before = countLeaves();
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("Tab");
+    expect(countLeaves()).toBe(before + 1);
+
+    // ⌘Z is deliberately a no-op while editing (so it doesn't fight the
+    // input's own native undo) — exit editing first, as a real user would.
+    fireKey("Escape");
+    fireKeyMeta("z");
+    expect(countLeaves()).toBe(before);
+
+    fireKeyMeta("z", true);
+    expect(countLeaves()).toBe(before + 1);
+  });
+
+  it("undoes a delete", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("Delete");
+    expect(container.querySelector(`[data-node-id="${child.id}"]`)).toBeNull();
+
+    fireKeyMeta("z");
+    expect(container.querySelector(`[data-node-id="${child.id}"]`)).not.toBeNull();
+  });
+
+  it("undoes a completed drag but does not record a no-op click as a history step", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const boxX = () => nodeEl(container, child.id).querySelector(".mm-node-box")!.getAttribute("x");
+    const xBefore = boxX();
+
+    pointer(nodeEl(container, child.id), "pointerdown", 100, 100);
+    pointer(container, "pointermove", 140, 130);
+    pointer(container, "pointerup", 140, 130);
+    expect(boxX()).not.toBe(xBefore);
+
+    fireKeyMeta("z");
+    expect(boxX()).toBe(xBefore);
+  });
+
+  it("does not trigger undo/redo while editing text", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("Tab");
+    const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+    input.value = "typed while editing";
+
+    fireKeyMeta("z"); // should be a no-op at the app level (input handles its own undo)
+    expect(input.value).toBe("typed while editing");
+    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
   });
 });

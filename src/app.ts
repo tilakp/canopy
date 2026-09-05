@@ -9,6 +9,8 @@ import {
 } from "./model";
 import { renderMindMap, type Camera, type EdgeStyle } from "./render";
 import { createToolbar } from "./toolbar";
+import { createHistory } from "./history";
+import { saveToFile, loadFromFile } from "./persistence";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
@@ -22,13 +24,20 @@ type DragState =
   | { type: "pan"; startX: number; startY: number; startCamera: Camera }
   | null;
 
-export function startApp(container: HTMLElement, root: MindMapNode): void {
+export function startApp(container: HTMLElement, initialRoot: MindMapNode): void {
+  let root = initialRoot;
   let selectedId: string | null = null;
   let editingId: string | null = null;
   let edgeStyle: EdgeStyle = "curved";
   let camera: Camera | undefined;
   let dragState: DragState = null;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
+  let filePath: string | null = null;
+
+  const history = createHistory(structuredClone(root));
+  function commit(): void {
+    history.push(structuredClone(root));
+  }
 
   // Without a focused, focusable element, WKWebView's native tab-navigation
   // can intercept the Tab key before it reaches the DOM as a keydown event.
@@ -47,12 +56,17 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
     onPickColor(color) {
       if (!selectedId || selectedId === root.id) return;
       setColor(root, selectedId, color);
+      commit();
       render();
     },
     onPickEdgeStyle(style) {
       edgeStyle = style;
       render();
     },
+    onUndo: () => void performUndo(),
+    onRedo: () => void performRedo(),
+    onSave: () => void performSave(),
+    onOpen: () => void performOpen(),
   });
 
   function render(): void {
@@ -63,6 +77,7 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       {
         onEditCommit(id, text) {
           updateText(root, id, text.trim() || "Untitled");
+          commit();
           editingId = null;
           render();
           container.focus();
@@ -81,12 +96,53 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       hasSelection,
       activeColor: hasSelection ? (result.positions.get(selectedId!)?.color ?? null) : null,
       edgeStyle,
+      canUndo: history.canUndo(),
+      canRedo: history.canRedo(),
     });
   }
 
   function startEditing(id: string): void {
     selectedId = id;
     editingId = id;
+    render();
+  }
+
+  function loadRoot(newRoot: MindMapNode, path: string | null): void {
+    root = newRoot;
+    filePath = path;
+    selectedId = null;
+    editingId = null;
+    camera = undefined;
+    dragState = null;
+    history.push(structuredClone(root));
+    render();
+  }
+
+  async function performSave(): Promise<void> {
+    const savedPath = await saveToFile(root, filePath);
+    if (savedPath) filePath = savedPath;
+  }
+
+  async function performOpen(): Promise<void> {
+    const result = await loadFromFile();
+    if (result) loadRoot(result.root, result.path);
+  }
+
+  function performUndo(): void {
+    const snapshot = history.undo();
+    if (!snapshot) return;
+    root = structuredClone(snapshot);
+    selectedId = null;
+    editingId = null;
+    render();
+  }
+
+  function performRedo(): void {
+    const snapshot = history.redo();
+    if (!snapshot) return;
+    root = structuredClone(snapshot);
+    selectedId = null;
+    editingId = null;
     render();
   }
 
@@ -110,7 +166,9 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       const parentId = addBtn.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
       if (parentId) {
         const parent = findNode(root, parentId)!;
-        startEditing(addChild(parent, "").id);
+        const child = addChild(parent, "");
+        commit();
+        startEditing(child.id);
       }
       return;
     }
@@ -178,6 +236,10 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   });
 
   container.addEventListener("pointerup", () => {
+    // A node drag mutates the tree (offset), so it's one undo step — but
+    // only if it actually moved (a plain click that never dispatched a
+    // pointermove leaves offset untouched, and shouldn't clutter history).
+    if (dragState?.type === "node") commit();
     dragState = null;
   });
   container.addEventListener("pointercancel", () => {
@@ -225,25 +287,47 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       container.focus();
       return;
     }
+
+    const cmd = e.metaKey || e.ctrlKey;
+    // While editing, do nothing at all here (crucially, no preventDefault)
+    // so the input's own native undo handles text edits instead.
+    if (cmd && e.key.toLowerCase() === "z" && !editingId) {
+      e.preventDefault();
+      if (e.shiftKey) performRedo();
+      else performUndo();
+      return;
+    }
+    if (cmd && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      void performSave();
+      return;
+    }
+    if (cmd && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      void performOpen();
+      return;
+    }
+
     if (editingId) return;
 
     if (e.key === "Tab") {
       e.preventDefault();
       const parent = selectedId ? (findNode(root, selectedId) ?? root) : root;
-      startEditing(addChild(parent, "").id);
+      const child = addChild(parent, "");
+      commit();
+      startEditing(child.id);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (!selectedId || selectedId === root.id) {
-        startEditing(addChild(root, "").id);
-      } else {
-        const parent = findParent(root, selectedId) ?? root;
-        startEditing(addChild(parent, "").id);
-      }
+      const parent = !selectedId || selectedId === root.id ? root : (findParent(root, selectedId) ?? root);
+      const child = addChild(parent, "");
+      commit();
+      startEditing(child.id);
     } else if (e.key === "Delete" || e.key === "Backspace") {
       if (!selectedId || selectedId === root.id) return;
       e.preventDefault();
       const parent = findParent(root, selectedId);
       removeNode(root, selectedId);
+      commit();
       selectedId = parent ? parent.id : null;
       render();
     }
