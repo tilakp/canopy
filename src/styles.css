@@ -22,6 +22,11 @@ body {
   outline: none;
 }
 
+.mm-canvas-container {
+  position: absolute;
+  inset: 0;
+}
+
 .mm-canvas {
   width: 100%;
   height: 100%;
@@ -53,27 +58,24 @@ body {
   fill: #1f1f26;
 }
 
+.mm-node-box {
+  stroke: transparent;
+  stroke-width: 2;
+  transition: stroke 0.1s;
+}
+
+.mm-leaf.mm-selected .mm-node-box {
+  stroke: #4c6ef5;
+}
+
 .mm-node-text {
   font-size: 14.5px;
   font-weight: 500;
-  fill: #45454e;
-}
-
-.mm-node-hit {
-  fill: transparent;
-}
-
-.mm-leaf.mm-selected .mm-node-hit {
-  fill: #eef1ff;
-}
-
-.mm-leaf.mm-selected .mm-node-text {
-  fill: #4c6ef5;
+  fill: #33333b;
 }
 
 .mm-root-text.mm-editing,
-.mm-node-text.mm-editing,
-.mm-node-hit.mm-editing {
+.mm-node-text.mm-editing {
   opacity: 0;
 }
 
@@ -81,7 +83,40 @@ body {
   fill: none;
   stroke-width: 2;
   stroke-linecap: round;
+  stroke-linejoin: round;
   opacity: 0.75;
+}
+
+.mm-add-btn circle {
+  fill: #ffffff;
+  stroke: #c7c9d1;
+  stroke-width: 1;
+}
+
+.mm-add-btn path {
+  stroke: #6b6d76;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.mm-add-btn {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.mm-node:hover .mm-add-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mm-add-btn:hover circle {
+  fill: #4c6ef5;
+  stroke: #4c6ef5;
+}
+
+.mm-add-btn:hover path {
+  stroke: #ffffff;
 }
 
 .mm-edit-input {
@@ -95,4 +130,80 @@ body {
   outline: none;
   min-width: 40px;
   box-shadow: 0 0 0 3px rgb(76 110 245 / 0.15);
+}
+
+/* Toolbar */
+
+.mm-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgb(255 255 255 / 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid #ececf1;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+}
+
+.mm-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mm-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: #e5e5ea;
+}
+
+.mm-toolbar[data-disabled="true"] .mm-swatch {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.mm-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgb(0 0 0 / 0.06);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mm-swatch:hover {
+  transform: scale(1.12);
+}
+
+.mm-swatch[data-active="true"] {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #4c6ef5;
+}
+
+.mm-edge-btn {
+  width: 28px;
+  height: 24px;
+  border: 1px solid #e5e5ea;
+  border-radius: 7px;
+  background: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b6d76;
+}
+
+.mm-edge-btn[data-active="true"] {
+  background: #eef1ff;
+  border-color: #4c6ef5;
+  color: #4c6ef5;
+}
+
+.mm-edge-btn svg {
+  width: 16px;
+  height: 16px;
 }

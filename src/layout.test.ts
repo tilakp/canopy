@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { addChild, createNode } from "./model";
-import { computeLayout } from "./layout";
+import { computeLayout, type GetSize } from "./layout";
 
 const NODE_HEIGHT = 40;
+const NODE_WIDTH = 120;
+const fixedSize: GetSize = () => ({ width: NODE_WIDTH, height: NODE_HEIGHT });
 
 // Nodes that share an x-coordinate are on the same side at the same depth,
 // so their vertical slices must not overlap.
@@ -24,7 +26,7 @@ function expectNoOverlap(positions: Map<string, { x: number; y: number }>) {
 describe("computeLayout", () => {
   it("places a lone root at the origin", () => {
     const root = createNode("Root");
-    const { positions, edges } = computeLayout(root);
+    const { positions, edges } = computeLayout(root, fixedSize);
     expect(positions.size).toBe(1);
     expect(edges).toHaveLength(0);
     expect(positions.get(root.id)).toMatchObject({ x: 0, y: 0, side: "root" });
@@ -34,7 +36,7 @@ describe("computeLayout", () => {
     const root = createNode("Root");
     for (let i = 0; i < 4; i++) addChild(root, `Child ${i}`);
 
-    const { positions, edges } = computeLayout(root);
+    const { positions, edges } = computeLayout(root, fixedSize);
     expect(positions.size).toBe(5);
     expect(edges).toHaveLength(4);
     expectNoOverlap(positions);
@@ -47,7 +49,7 @@ describe("computeLayout", () => {
       for (let j = 0; j < 3; j++) addChild(branch, `Leaf ${i}-${j}`);
     }
 
-    const { positions, edges } = computeLayout(root);
+    const { positions, edges } = computeLayout(root, fixedSize);
     expect(positions.size).toBe(1 + 5 + 15);
     expect(edges).toHaveLength(5 + 15);
     expectNoOverlap(positions);
@@ -60,7 +62,7 @@ describe("computeLayout", () => {
       addChild(branch, `Leaf ${i}`);
     }
 
-    const { positions } = computeLayout(root);
+    const { positions } = computeLayout(root, fixedSize);
     const byDepth = new Map<number, number[]>();
     for (const { x, depth } of positions.values()) {
       (byDepth.get(depth) ?? byDepth.set(depth, []).get(depth)!).push(x);
@@ -76,9 +78,55 @@ describe("computeLayout", () => {
     addChild(root, "A");
     addChild(root, "B");
 
-    const { positions } = computeLayout(root);
+    const { positions } = computeLayout(root, fixedSize);
     const ys = [...positions.values()].filter((p) => p.depth === 1).map((p) => p.y);
     expect(ys[0] + ys[1]).toBeCloseTo(0);
+  });
+
+  it("gives a wider node's children more horizontal clearance", () => {
+    const root = createNode("Root");
+    const wide = addChild(root, "Wide");
+    const wideChild = addChild(wide, "Wide's child");
+
+    const getSize: GetSize = (node) => ({
+      width: node.id === wide.id ? 400 : NODE_WIDTH,
+      height: NODE_HEIGHT,
+    });
+
+    const { positions } = computeLayout(root, getSize);
+    const wideLayout = positions.get(wide.id)!;
+    const childLayout = positions.get(wideChild.id)!;
+    expect(childLayout.x).toBeGreaterThanOrEqual(wideLayout.x + 400);
+  });
+
+  it("reserves at least a node's own height even with smaller children", () => {
+    const root = createNode("Root");
+    const tall = addChild(root, "Tall");
+    addChild(tall, "small child");
+
+    const getSize: GetSize = (node) => ({
+      width: NODE_WIDTH,
+      height: node.id === tall.id ? 200 : 20,
+    });
+
+    const { positions } = computeLayout(root, getSize);
+    // The child's own slice (20) is far smaller than the parent's height
+    // (200), so the parent's height should govern the reserved vertical
+    // space rather than being clipped to the child's.
+    const tallLayout = positions.get(tall.id)!;
+    expect(tallLayout.height).toBe(200);
+  });
+
+  it("lets a node's own color override its inherited branch color", () => {
+    const root = createNode("Root");
+    const branch = addChild(root, "Branch");
+    const recolored = addChild(branch, "Recolored");
+    recolored.color = "#123456";
+    const sibling = addChild(branch, "Sibling");
+
+    const { positions } = computeLayout(root, fixedSize);
+    expect(positions.get(recolored.id)!.color).toBe("#123456");
+    expect(positions.get(sibling.id)!.color).toBe(positions.get(branch.id)!.color);
   });
 
   it("shifts a dragged node and its descendants by its offset", () => {
@@ -87,13 +135,13 @@ describe("computeLayout", () => {
     const leaf = addChild(branch, "Leaf");
     branch.offset = { dx: 30, dy: -12 };
 
-    const { positions } = computeLayout(root);
+    const { positions } = computeLayout(root, fixedSize);
     const branchDefault = positions.get(branch.id)!;
     const leafDefault = positions.get(leaf.id)!;
 
     // Recompute without the offset to get the baseline position.
     branch.offset = undefined;
-    const baseline = computeLayout(root);
+    const baseline = computeLayout(root, fixedSize);
     const branchBase = baseline.positions.get(branch.id)!;
     const leafBase = baseline.positions.get(leaf.id)!;
 
@@ -108,11 +156,11 @@ describe("computeLayout", () => {
     const root = createNode("Root");
     const a = addChild(root, "A");
     const b = addChild(root, "B");
-    const before = computeLayout(root);
+    const before = computeLayout(root, fixedSize);
     const bBefore = before.positions.get(b.id)!;
 
     a.offset = { dx: 50, dy: 50 };
-    const after = computeLayout(root);
+    const after = computeLayout(root, fixedSize);
     const bAfter = after.positions.get(b.id)!;
 
     expect(bAfter).toEqual(bBefore);

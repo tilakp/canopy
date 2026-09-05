@@ -1,5 +1,14 @@
-import { addChild, findNode, findParent, removeNode, updateText, type MindMapNode } from "./model";
-import { renderMindMap, type Camera } from "./render";
+import {
+  addChild,
+  findNode,
+  findParent,
+  removeNode,
+  setColor,
+  updateText,
+  type MindMapNode,
+} from "./model";
+import { renderMindMap, type Camera, type EdgeStyle } from "./render";
+import { createToolbar } from "./toolbar";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
@@ -16,6 +25,7 @@ type DragState =
 export function startApp(container: HTMLElement, root: MindMapNode): void {
   let selectedId: string | null = null;
   let editingId: string | null = null;
+  let edgeStyle: EdgeStyle = "curved";
   let camera: Camera | undefined;
   let dragState: DragState = null;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
@@ -26,11 +36,30 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
   // that.
   container.tabIndex = -1;
 
+  // renderMindMap() clears its container on every render, so the canvas
+  // gets a dedicated child element — otherwise it would wipe the toolbar
+  // out after the very first render.
+  const canvasEl = document.createElement("div");
+  canvasEl.className = "mm-canvas-container";
+  container.appendChild(canvasEl);
+
+  const toolbar = createToolbar(container, {
+    onPickColor(color) {
+      if (!selectedId || selectedId === root.id) return;
+      setColor(root, selectedId, color);
+      render();
+    },
+    onPickEdgeStyle(style) {
+      edgeStyle = style;
+      render();
+    },
+  });
+
   function render(): void {
     const result = renderMindMap(
-      container,
+      canvasEl,
       root,
-      { selectedId, editingId, camera },
+      { selectedId, editingId, edgeStyle, camera },
       {
         onEditCommit(id, text) {
           updateText(root, id, text.trim() || "Untitled");
@@ -46,6 +75,13 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       },
     );
     camera = result.camera;
+
+    const hasSelection = selectedId !== null && selectedId !== root.id;
+    toolbar.update({
+      hasSelection,
+      activeColor: hasSelection ? (result.positions.get(selectedId!)?.color ?? null) : null,
+      edgeStyle,
+    });
   }
 
   function startEditing(id: string): void {
@@ -56,6 +92,10 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
 
   container.addEventListener("pointerdown", (e) => {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
+    // Let toolbar buttons behave like normal buttons — don't preventDefault
+    // (which would suppress the click event they rely on) or treat this as
+    // a canvas pan.
+    if ((e.target as Element).closest(".mm-toolbar")) return;
     // Suppress the browser's default mousedown focus handling: without
     // this, when startEditing() below focuses a freshly-created <input>,
     // the browser's own default action (targeting the original, now
@@ -64,6 +104,16 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
     e.preventDefault();
     container.focus();
     if (editingId) return;
+
+    const addBtn = (e.target as Element).closest(".mm-add-btn");
+    if (addBtn) {
+      const parentId = addBtn.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+      if (parentId) {
+        const parent = findNode(root, parentId)!;
+        startEditing(addChild(parent, "").id);
+      }
+      return;
+    }
 
     const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
     if (nodeEl) {

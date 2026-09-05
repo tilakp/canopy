@@ -5,6 +5,10 @@ export interface MindMapNode {
   // Manual drag adjustment layered on top of the auto-computed position,
   // applied to this node and inherited by its descendants.
   offset?: { dx: number; dy: number };
+  // Explicit branch color starting at this node, inherited by descendants
+  // until another node overrides it. Unset means "inherit from parent",
+  // and an unset root falls back to the auto-assigned palette.
+  color?: string;
 }
 
 export function createNode(text: string): MindMapNode {
@@ -52,4 +56,9 @@ export function updateText(root: MindMapNode, id: string, text: string): void {
 export function setOffset(root: MindMapNode, id: string, offset: { dx: number; dy: number }): void {
   const node = findNode(root, id);
   if (node) node.offset = offset;
+}
+
+export function setColor(root: MindMapNode, id: string, color: string): void {
+  const node = findNode(root, id);
+  if (node) node.color = color;
 }
