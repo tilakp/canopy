@@ -39,6 +39,10 @@ body {
   cursor: pointer;
 }
 
+.mm-hover-zone {
+  fill: transparent;
+}
+
 .mm-root-box {
   fill: #ffffff;
   stroke: #e9e9ee;

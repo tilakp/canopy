@@ -192,6 +192,21 @@ function renderNode(
   content.appendChild(g);
 
   const boxTop = layout.y - size.height / 2;
+
+  // Invisible, but hit-testable: without this, the box and the add-button
+  // are two separate painted shapes with empty (unpainted, so un-hoverable)
+  // space between them, and the CSS :hover driving the button's visibility
+  // drops the instant the cursor crosses that gap, hiding the button before
+  // the pointer ever reaches it. This spans continuously from the box
+  // through the button so hover survives the trip.
+  const hoverZone = document.createElementNS(SVG_NS, "rect");
+  hoverZone.setAttribute("class", "mm-hover-zone");
+  hoverZone.setAttribute("x", String(layout.x));
+  hoverZone.setAttribute("y", String(boxTop));
+  hoverZone.setAttribute("width", String(size.width + ADD_BUTTON_GAP + ADD_BUTTON_RADIUS * 2));
+  hoverZone.setAttribute("height", String(size.height));
+  g.appendChild(hoverZone);
+
   const rect = document.createElementNS(SVG_NS, "rect");
   rect.setAttribute("class", isRoot ? "mm-root-box" : "mm-node-box");
   rect.setAttribute("x", String(layout.x));
