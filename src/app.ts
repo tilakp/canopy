@@ -56,6 +56,12 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
 
   container.addEventListener("pointerdown", (e) => {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
+    // Suppress the browser's default mousedown focus handling: without
+    // this, when startEditing() below focuses a freshly-created <input>,
+    // the browser's own default action (targeting the original, now
+    // detached element) blurs it right back off a tick later, which
+    // immediately commits and closes the edit we just opened.
+    e.preventDefault();
     container.focus();
     if (editingId) return;
 
