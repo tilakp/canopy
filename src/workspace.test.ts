@@ -64,6 +64,27 @@ describe("createWorkspace", () => {
     expect(docContainers()).toHaveLength(1);
   });
 
+  // Key/resize listeners are window-level, so every open document hears
+  // every keystroke and ignores it unless it's the active one. Closing the
+  // active tab used to leave that instance flagged active with its
+  // listeners still attached — it kept editing its own detached canvas (and
+  // would still have opened a save dialog on ⌘S).
+  it("stops a closed document from reacting to window key events", () => {
+    const workspace = createWorkspace(container, createNode("First"), null);
+    workspace.openInNewTab(createNode("Second"), null);
+    const closed = docContainers()[1];
+    const nodesBefore = closed.querySelectorAll(".mm-node").length;
+
+    tabEls()[1]
+      .querySelector<HTMLButtonElement>(".mm-tab-close")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+
+    expect(closed.querySelectorAll(".mm-node")).toHaveLength(nodesBefore);
+    // The tab that's actually open still responds.
+    expect(docContainers()[0].querySelectorAll(".mm-node").length).toBe(nodesBefore + 1);
+  });
+
   it("replaces the last remaining tab with a fresh blank map instead of leaving zero", () => {
     createWorkspace(container, createNode("Only"), null);
     expect(docContainers()).toHaveLength(1);

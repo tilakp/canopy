@@ -6,11 +6,15 @@ import { startApp } from "./app";
 // render.ts's safeBBox() falls back to a zero-size box, which is fine here
 // since these tests only care about interaction/state, not visual geometry.
 
+// pointerup goes to the container, not to `el`: the pointerdown handler
+// re-renders synchronously, which detaches `el`, and a real browser would
+// deliver the release to the container anyway (it took pointer capture).
+// Dispatching it on the detached `el` instead never reaches the app at all.
 function fireClick(el: Element, x: number, y: number, timeStamp: number) {
   const down = new PointerEvent("pointerdown", { bubbles: true, clientX: x, clientY: y });
   Object.defineProperty(down, "timeStamp", { value: timeStamp });
   el.dispatchEvent(down);
-  el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y }));
+  container.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y }));
 }
 
 function fireKey(key: string) {
@@ -208,6 +212,94 @@ describe("startApp interactions", () => {
     expect(after.scale).toBeGreaterThan(before.scale);
   });
 
+  // Zoom is a camera-only change, so the continuous (wheel/pinch) path
+  // updates just the content group's transform instead of rebuilding the
+  // whole SVG. A full rebuild per frame is what made pinch-zoom feel uneven:
+  // its cost varies with node count, so each visible step jumped by however
+  // long the previous frame's render happened to take.
+  it("does not rebuild the SVG while wheel-zooming", async () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const childBefore = nodeEl(container, child.id);
+    const groupBefore = container.querySelector("svg > g")!;
+    const before = getTransform(container);
+
+    for (let i = 0; i < 5; i++) {
+      container.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -40 }),
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+
+    expect(getTransform(container).scale).toBeGreaterThan(before.scale);
+    // Same DOM elements throughout — a full render would have replaced them.
+    expect(nodeEl(container, child.id)).toBe(childBefore);
+    expect(container.querySelector("svg > g")).toBe(groupBefore);
+  });
+
+  // The inline edit overlay is an HTML element positioned in screen
+  // coordinates derived from the camera, so unlike the SVG it doesn't come
+  // along for free with a transform change — zooming has to fully re-render
+  // to reposition it.
+  it("keeps the edit overlay positioned while wheel-zooming", async () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireClick(nodeEl(container, child.id), 100, 100, 120);
+    const overlayLeft = container.querySelector<HTMLInputElement>("input.mm-edit-input")!.style.left;
+
+    container.dispatchEvent(
+      new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -100 }),
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const overlay = container.querySelector<HTMLInputElement>("input.mm-edit-input");
+    expect(overlay).not.toBeNull();
+    expect(overlay!.style.left).not.toBe(overlayLeft);
+  });
+
+  // Panning is a camera-only change too, so it takes the same one-attribute
+  // fast path as zoom. pointermove fires once per frame during a drag, so a
+  // full SVG rebuild per event caps the pan at however long a render takes.
+  it("does not rebuild the SVG while panning", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    // The pointerdown itself renders (it deselects), so snapshot after it.
+    pointer(container, "pointerdown", 200, 200);
+    const childBefore = nodeEl(container, child.id);
+    const groupBefore = container.querySelector("svg > g")!;
+    const before = getTransform(container);
+
+    for (let i = 1; i <= 5; i++) pointer(container, "pointermove", 200 + i * 10, 200 + i * 8);
+
+    expect(getTransform(container).x - before.x).toBeCloseTo(50);
+    expect(getTransform(container).y - before.y).toBeCloseTo(40);
+    // Same DOM elements throughout — a full render would have replaced them.
+    expect(nodeEl(container, child.id)).toBe(childBefore);
+    expect(container.querySelector("svg > g")).toBe(groupBefore);
+  });
+
+  // A discrete mouse wheel outside Chromium reports lines, not pixels: one
+  // notch is deltaY 3, not 48. Treated as pixels that's a ~0.5% zoom step.
+  it("treats a line-mode wheel delta like the equivalent pixel scroll", async () => {
+    const scaleAfterWheel = async (deltaY: number, deltaMode: number) => {
+      document.body.innerHTML = "";
+      const el = document.createElement("div");
+      el.getBoundingClientRect = () =>
+        ({ width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON() {} }) as DOMRect;
+      document.body.appendChild(el);
+      startApp(el, buildTree().root);
+      el.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY, deltaMode }),
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return getTransform(el).scale;
+    };
+
+    expect(await scaleAfterWheel(-3, 1)).toBeCloseTo(await scaleAfterWheel(-48, 0));
+  });
+
   it("zooms in/out around the viewport center via ⌘= / ⌘-", () => {
     const { root } = buildTree();
     startApp(container, root);
@@ -287,6 +379,24 @@ describe("startApp interactions", () => {
 
     fireKeyMeta("z");
     expect(boxX()).toBe(xBefore);
+  });
+
+  it("does not record a plain click on a node as a history step", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const countLeaves = () => container.querySelectorAll(".mm-leaf").length;
+    const before = countLeaves();
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("Tab");
+    fireKey("Escape");
+    expect(countLeaves()).toBe(before + 1);
+
+    // Clicking around afterwards must not bury that edit under identical
+    // snapshots — one ⌘Z should still undo the add.
+    fireClick(nodeEl(container, child.id), 100, 100, 2000);
+    fireKeyMeta("z");
+    expect(countLeaves()).toBe(before);
   });
 
   it("does not trigger undo/redo while editing text", () => {

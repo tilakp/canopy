@@ -147,7 +147,7 @@ export function renderMindMap(
 
   const contentBBox = safeBBox(content);
   const camera = state.camera ?? computeInitialCamera(container, contentBBox, root.children.length === 0);
-  content.setAttribute("transform", `translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
+  content.setAttribute("transform", cameraTransform(camera));
 
   if (state.editingId) {
     const node = findNode(root, state.editingId);
@@ -201,6 +201,23 @@ export function renderMindMap(
   }
 
   return { camera, positions, contentBBox };
+}
+
+function cameraTransform(camera: Camera): string {
+  return `translate(${camera.x} ${camera.y}) scale(${camera.scale})`;
+}
+
+// Re-aims the camera on an already-rendered canvas without rebuilding it.
+// The camera is the *only* camera-dependent thing in a render: computeLayout
+// works entirely in world coordinates, so scale/pan affect nothing but this
+// one transform attribute on the content group. Returns false if nothing has
+// been rendered into `container` yet, so the caller can fall back to a full
+// render.
+export function applyCamera(container: HTMLElement, camera: Camera): boolean {
+  const content = container.querySelector<SVGGElement>("svg.mm-canvas > g");
+  if (!content) return false;
+  content.setAttribute("transform", cameraTransform(camera));
+  return true;
 }
 
 // Computes the camera that fits `bbox` snugly inside `rect`, with a margin

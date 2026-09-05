@@ -24,6 +24,41 @@ export async function loadFromFile(): Promise<{ root: MindMapNode; path: string 
 
 export async function loadFromPath(path: string): Promise<{ root: MindMapNode; path: string }> {
   const text = await readTextFile(path);
-  const root = JSON.parse(text) as MindMapNode;
-  return { root, path };
+  return { root: parseDocument(text), path };
+}
+
+// A .canopy file is just JSON on disk: it can be hand-edited, truncated, or
+// not a mind map at all (the open dialog accepts .json too, and a file
+// double-clicked in Finder was never necessarily written by this app). The
+// shape is checked here rather than trusted, because a node missing its
+// `children` array throws mid-render — after `root` has already been
+// swapped in, leaving the document unrenderable and its previous contents
+// gone.
+export function parseDocument(text: string): MindMapNode {
+  return parseNode(JSON.parse(text));
+}
+
+function parseNode(value: unknown): MindMapNode {
+  const raw = value as Record<string, unknown> | null;
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof raw.id !== "string" ||
+    typeof raw.text !== "string" ||
+    !Array.isArray(raw.children)
+  ) {
+    throw new Error("Not a Canopy mind map");
+  }
+
+  const node: MindMapNode = { id: raw.id, text: raw.text, children: raw.children.map(parseNode) };
+  const offset = raw.offset as { dx?: unknown; dy?: unknown } | undefined;
+  if (offset && typeof offset.dx === "number" && typeof offset.dy === "number") {
+    node.offset = { dx: offset.dx, dy: offset.dy };
+  }
+  if (typeof raw.color === "string") node.color = raw.color;
+  if (raw.collapsed === true) node.collapsed = true;
+  if (typeof raw.notes === "string") node.notes = raw.notes;
+  if (typeof raw.link === "string") node.link = raw.link;
+  if (typeof raw.icon === "string") node.icon = raw.icon;
+  return node;
 }

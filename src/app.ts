@@ -14,7 +14,7 @@ import {
   updateText,
   type MindMapNode,
 } from "./model";
-import { renderMindMap, computeFitCamera, type Camera, type EdgeStyle } from "./render";
+import { renderMindMap, computeFitCamera, applyCamera, type Camera, type EdgeStyle } from "./render";
 import { createToolbar } from "./toolbar";
 import { createHistory } from "./history";
 import { saveToFile, loadFromFile } from "./persistence";
@@ -47,6 +47,11 @@ export interface AppHandle {
   // fill is computed once per render into an inline SVG attribute — this
   // forces a fresh render so that color picks up the new theme too.
   forceRender(): void;
+  // Detaches this instance's window-level listeners when its tab closes.
+  // They're global, so without this a closed document keeps handling every
+  // keystroke (⌘S on a closed map still opens a save dialog) and keeps its
+  // whole tree, undo history and detached DOM alive for the session.
+  destroy(): void;
 }
 
 export function startApp(
@@ -65,6 +70,7 @@ export function startApp(
   let edgeStyle: EdgeStyle = "curved";
   let camera: Camera | undefined;
   let dragState: DragState = null;
+  let dragMoved = false;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
   let filePath: string | null = initialFilePath;
   let lastContentBBox = new DOMRect();
@@ -207,7 +213,9 @@ export function startApp(
   }
 
   async function performOpen(): Promise<void> {
-    const result = await loadFromFile();
+    // A file that can't be read, or whose JSON isn't a mind map, must leave
+    // the current document alone rather than half-replacing it.
+    const result = await loadFromFile().catch(() => null);
     if (result) loadRoot(result.root, result.path);
   }
 
@@ -365,33 +373,44 @@ export function startApp(
     const dyPx = e.clientY - dragState.startY;
 
     if (dragState.type === "node") {
+      if (dxPx === 0 && dyPx === 0) return;
+      dragMoved = true;
       const node = findNode(root, dragState.id)!;
       node.offset = {
         dx: dragState.startOffset.dx + dxPx / camera!.scale,
         dy: dragState.startOffset.dy + dyPx / camera!.scale,
       };
       dropTargetId = findDropTargetId(e.clientX, e.clientY, dragState.id);
+      render();
     } else {
       camera = { ...dragState.startCamera, x: dragState.startCamera.x + dxPx, y: dragState.startCamera.y + dyPx };
+      // Panning, like zooming, moves the camera and nothing else, so it gets
+      // the same one-attribute fast path — see zoomAroundLive for why a full
+      // render per event is worth avoiding. (No edit overlay can be up here:
+      // pointerdown bails out while one is, so a pan never starts mid-edit.)
+      if (!applyCamera(canvasEl, camera)) render();
     }
-    render();
   });
 
   container.addEventListener("pointerup", () => {
+    if (!dragState) return;
     // A node drag mutates the tree (offset, or a reparent), so it's one
-    // undo step — but only if it actually moved (a plain click that never
-    // dispatched a pointermove leaves offset untouched, and shouldn't
-    // clutter history).
-    if (dragState?.type === "node") {
+    // undo step — but only if it actually moved. A plain click never
+    // dispatches a pointermove, and recording it would bury real edits
+    // under identical snapshots, so ⌘Z would appear to do nothing until
+    // you'd pressed it once per intervening click.
+    if (dragState.type === "node" && dragMoved) {
       if (dropTargetId) reparentNode(root, dragState.id, dropTargetId);
       commit();
     }
     dragState = null;
+    dragMoved = false;
     dropTargetId = null;
     render();
   });
   container.addEventListener("pointercancel", () => {
     dragState = null;
+    dragMoved = false;
     dropTargetId = null;
   });
 
@@ -400,16 +419,45 @@ export function startApp(
   // 1:1 tracking of the OS-reported deltas felt too slow.
   const PINCH_ZOOM_SENSITIVITY = 1.6;
 
-  // Zooms so that the point at (anchorX, anchorY) in the *base* camera
-  // (before this zoom) stays under that same screen point afterward.
-  // Shared by wheel-scroll, WebKit pinch gestures, and the toolbar's
-  // explicit zoom in/out/fit buttons.
-  function zoomAround(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
+  // Moves the camera so that the point at (anchorX, anchorY) in the *base*
+  // camera (before this zoom) stays under that same screen point afterward.
+  function cameraZoomedAround(
+    baseCamera: Camera,
+    targetScale: number,
+    anchorX: number,
+    anchorY: number,
+  ): Camera {
     const scale = clamp(targetScale, ZOOM_MIN, ZOOM_MAX);
     const worldX = (anchorX - baseCamera.x) / baseCamera.scale;
     const worldY = (anchorY - baseCamera.y) / baseCamera.scale;
-    camera = { scale, x: anchorX - worldX * scale, y: anchorY - worldY * scale };
+    return { scale, x: anchorX - worldX * scale, y: anchorY - worldY * scale };
+  }
+
+  // Discrete, one-shot zoom (toolbar buttons, ⌘= / ⌘-). One full render per
+  // press is fine — there's no frame budget to hold to.
+  function zoomAround(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
+    camera = cameraZoomedAround(baseCamera, targetScale, anchorX, anchorY);
     render();
+  }
+
+  // Continuous zoom (trackpad pinch / wheel), where a full render per frame
+  // is what made the gesture feel uneven. Zooming changes nothing about the
+  // document — computeLayout's positions are world coordinates that don't
+  // depend on scale — yet render() tears down the whole SVG and rebuilds
+  // every node, re-measuring text through canvas and forcing a getBBox()
+  // reflow. Measured on a 79-node map that's ~48ms typical and up to
+  // ~180ms, versus ~0ms to rewrite the one transform attribute. The
+  // accumulated deltas mean the *total* zoom came out right either way, but
+  // an over-budget frame lets the next batch of wheel/gesture events pile
+  // up, so each visible step jumped by however long the previous render
+  // happened to take — hence "sometimes too much, sometimes not much".
+  function zoomAroundLive(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
+    camera = cameraZoomedAround(baseCamera, targetScale, anchorX, anchorY);
+    // The inline edit overlays are HTML elements positioned in *screen*
+    // coordinates derived from the camera, so they're the one thing the SVG
+    // transform doesn't carry along — keep the full render while one is up.
+    const isEditing = editingId || notesEditingId || iconEditingId || linkEditingId;
+    if (isEditing || !applyCamera(canvasEl, camera)) render();
   }
 
   // Trackpad pinch on Chromium (incl. our own dev-server test target)
@@ -437,11 +485,11 @@ export function startApp(
         wheelBaseCamera = camera;
         wheelAccumScale = 1;
       }
-      wheelAccumScale *= Math.pow(1.0015, -e.deltaY * PINCH_ZOOM_SENSITIVITY);
+      wheelAccumScale *= Math.pow(1.0015, -wheelDeltaPixels(e, rect.height) * PINCH_ZOOM_SENSITIVITY);
       if (pendingWheelFrame === null) {
         pendingWheelFrame = requestAnimationFrame(() => {
           pendingWheelFrame = null;
-          zoomAround(wheelBaseCamera!, wheelBaseCamera!.scale * wheelAccumScale, wheelAnchorX, wheelAnchorY);
+          zoomAroundLive(wheelBaseCamera!, wheelBaseCamera!.scale * wheelAccumScale, wheelAnchorX, wheelAnchorY);
         });
       }
     },
@@ -479,7 +527,7 @@ export function startApp(
     if (pendingGestureFrame !== null) cancelAnimationFrame(pendingGestureFrame);
     pendingGestureFrame = requestAnimationFrame(() => {
       pendingGestureFrame = null;
-      zoomAround(base, targetScale, anchorX, anchorY);
+      zoomAroundLive(base, targetScale, anchorX, anchorY);
     });
   }) as EventListener);
   container.addEventListener("gestureend", ((e: Event) => {
@@ -488,7 +536,7 @@ export function startApp(
   }) as EventListener);
 
   let lastRect = container.getBoundingClientRect();
-  window.addEventListener("resize", () => {
+  const onWindowResize = () => {
     if (!isActive) return;
     const rect = container.getBoundingClientRect();
     if (camera) {
@@ -500,9 +548,10 @@ export function startApp(
     }
     lastRect = rect;
     render();
-  });
+  };
+  window.addEventListener("resize", onWindowResize);
 
-  window.addEventListener("keydown", (e) => {
+  const onWindowKeyDown = (e: KeyboardEvent) => {
     if (!isActive) return;
     // Global safety net: Escape always exits editing, even if the edit
     // input itself never picked up focus for some reason.
@@ -617,7 +666,8 @@ export function startApp(
       selectedId = parent ? parent.id : null;
       render();
     }
-  });
+  };
+  window.addEventListener("keydown", onWindowKeyDown);
 
   render();
   container.focus();
@@ -630,9 +680,27 @@ export function startApp(
     },
     getTitle: () => root.text,
     forceRender: () => render(),
+    destroy() {
+      isActive = false;
+      window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener("keydown", onWindowKeyDown);
+    },
   };
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+// One text line's worth of scroll, for normalizing line-mode wheel deltas.
+const WHEEL_LINE_HEIGHT = 16;
+
+// Trackpads and Chromium-based webviews report wheel deltas in pixels, but a
+// discrete mouse wheel can report lines (WebKitGTK) or pages instead, where
+// one full notch is a single-digit deltaY. Taken as pixels that's a ~0.5%
+// zoom step, i.e. a zoom that looks broken, so convert to pixels first.
+function wheelDeltaPixels(e: WheelEvent, viewportHeight: number): number {
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * WHEEL_LINE_HEIGHT;
+  if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * viewportHeight;
+  return e.deltaY;
 }

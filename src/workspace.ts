@@ -76,6 +76,9 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
   function closeDoc(id: string): void {
     const index = docs.findIndex((d) => d.id === id);
     if (index === -1) return;
+    // switchTo below only visits the docs still open, so a closed one is
+    // never told it's inactive — it has to drop its own window listeners.
+    docs[index].handle.destroy();
     docs[index].containerEl.remove();
     docs.splice(index, 1);
 
