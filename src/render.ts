@@ -76,9 +76,10 @@ export function renderMindMap(
 }
 
 // getBBox() on an empty <text> element has historically been flaky in some
-// WebKit versions; a zero-size fallback keeps rendering going instead of
-// throwing partway through a render.
-function safeBBox(el: SVGTextElement): DOMRect {
+// WebKit versions, and isn't implemented at all in jsdom (used by tests).
+// A zero-size fallback keeps rendering going instead of throwing partway
+// through a render.
+function safeBBox(el: SVGGraphicsElement): DOMRect {
   try {
     return el.getBBox();
   } catch {
@@ -94,7 +95,7 @@ function* iterateNodes(node: MindMapNode): Generator<MindMapNode> {
 }
 
 function computeInitialCamera(container: HTMLElement, content: SVGGElement): Camera {
-  const bbox = content.getBBox();
+  const bbox = safeBBox(content);
   const rect = container.getBoundingClientRect();
   const x = rect.width / 2 - (bbox.x + bbox.width / 2);
   const y = rect.height / 2 - (bbox.y + bbox.height / 2);

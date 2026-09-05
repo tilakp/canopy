@@ -3,8 +3,10 @@ import { renderMindMap, type Camera } from "./render";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
-const DOUBLE_CLICK_MS = 400;
-const DOUBLE_CLICK_PX = 5;
+// macOS's double-click speed preference can be slower than a hardcoded
+// "fast" guess, and real clicks never land on the exact same pixel twice.
+const DOUBLE_CLICK_MS = 600;
+const DOUBLE_CLICK_PX = 12;
 
 type DragState =
   | { type: "node"; id: string; startX: number; startY: number; startOffset: { dx: number; dy: number } }
@@ -95,7 +97,7 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
       render();
     }
-    container.setPointerCapture(e.pointerId);
+    container.setPointerCapture?.(e.pointerId);
   });
 
   container.addEventListener("pointermove", (e) => {
