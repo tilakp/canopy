@@ -165,4 +165,39 @@ describe("computeLayout", () => {
 
     expect(bAfter).toEqual(bBefore);
   });
+
+  it("hides a collapsed node's descendants from positions and edges", () => {
+    const root = createNode("Root");
+    const branch = addChild(root, "Branch");
+    const grandchild = addChild(branch, "Grandchild");
+    branch.collapsed = true;
+
+    const { positions, edges } = computeLayout(root, fixedSize);
+
+    expect(positions.has(branch.id)).toBe(true);
+    expect(positions.has(grandchild.id)).toBe(false);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toEqual({ fromId: root.id, toId: branch.id });
+  });
+
+  it("sizes a collapsed node's own slice as just its box, ignoring hidden descendants", () => {
+    const collapsedRoot = createNode("Root");
+    const branch = addChild(collapsedRoot, "Branch");
+    for (let i = 0; i < 5; i++) addChild(branch, `Child ${i}`); // would be tall if expanded
+    addChild(collapsedRoot, "Sibling");
+    branch.collapsed = true;
+
+    const bareRoot = createNode("Root");
+    addChild(bareRoot, "Branch"); // no children at all — same visible shape
+    addChild(bareRoot, "Sibling");
+
+    const collapsed = computeLayout(collapsedRoot, fixedSize);
+    const bare = computeLayout(bareRoot, fixedSize);
+
+    // A collapsed node with 5 hidden children lays out identically to a
+    // childless node — its subtree height ignores what's hidden.
+    expect([...collapsed.positions.values()].map(({ x, y }) => ({ x, y }))).toEqual(
+      [...bare.positions.values()].map(({ x, y }) => ({ x, y })),
+    );
+  });
 });

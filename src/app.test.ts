@@ -21,6 +21,10 @@ function fireKeyMeta(key: string, shiftKey = false) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, bubbles: true, cancelable: true }));
 }
 
+function fireKeyAlt(key: string) {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key, altKey: true, bubbles: true, cancelable: true }));
+}
+
 function pointer(el: Element, type: string, x: number, y: number) {
   el.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y }));
 }
@@ -189,7 +193,7 @@ describe("startApp interactions", () => {
     expect(after.y - before.y).toBeCloseTo(60);
   });
 
-  it("zooms in toward the cursor on wheel scroll", () => {
+  it("zooms in toward the cursor on wheel scroll", async () => {
     const { root } = buildTree();
     startApp(container, root);
     const before = getTransform(container);
@@ -197,9 +201,38 @@ describe("startApp interactions", () => {
     container.dispatchEvent(
       new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -100 }),
     );
+    // Wheel-driven zoom is coalesced to one render per animation frame.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     const after = getTransform(container);
     expect(after.scale).toBeGreaterThan(before.scale);
+  });
+
+  it("zooms in/out around the viewport center via ⌘= / ⌘-", () => {
+    const { root } = buildTree();
+    startApp(container, root);
+    const before = getTransform(container);
+
+    fireKeyMeta("=");
+    const zoomedIn = getTransform(container);
+    expect(zoomedIn.scale).toBeGreaterThan(before.scale);
+
+    fireKeyMeta("-");
+    const backOut = getTransform(container);
+    expect(backOut.scale).toBeCloseTo(before.scale);
+  });
+
+  it("zooms in/out via the toolbar's zoom buttons", () => {
+    const { root } = buildTree();
+    startApp(container, root);
+    const before = getTransform(container);
+
+    const zoomInBtn = container.querySelector<HTMLButtonElement>('[title^="Zoom in"]')!;
+    const zoomOutBtn = container.querySelector<HTMLButtonElement>('[title^="Zoom out"]')!;
+    zoomInBtn.click();
+    expect(getTransform(container).scale).toBeGreaterThan(before.scale);
+    zoomOutBtn.click();
+    expect(getTransform(container).scale).toBeCloseTo(before.scale);
   });
 
   // Undo/redo swaps in a freshly-cloned tree internally (new object
@@ -268,5 +301,125 @@ describe("startApp interactions", () => {
     fireKeyMeta("z"); // should be a no-op at the app level (input handles its own undo)
     expect(input.value).toBe("typed while editing");
     expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+  });
+
+  function isSelected(id: string): boolean {
+    return nodeEl(container, id).closest(".mm-node")?.classList.contains("mm-selected") ?? false;
+  }
+
+  it("navigates between siblings with ArrowUp/ArrowDown", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(root, "B");
+    startApp(container, root);
+
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    fireKey("ArrowDown");
+    expect(isSelected(b.id)).toBe(true);
+    fireKey("ArrowUp");
+    expect(isSelected(a.id)).toBe(true);
+    // Clamps at the ends instead of wrapping.
+    fireKey("ArrowUp");
+    expect(isSelected(a.id)).toBe(true);
+  });
+
+  it("navigates to the parent with ArrowLeft and to the first child with ArrowRight", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const grandchild = addChild(a, "A-child");
+    startApp(container, root);
+
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    fireKey("ArrowRight");
+    expect(isSelected(grandchild.id)).toBe(true);
+    fireKey("ArrowLeft");
+    expect(isSelected(a.id)).toBe(true);
+  });
+
+  it("reorders siblings with Alt+ArrowUp/ArrowDown", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(root, "B");
+    startApp(container, root);
+
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    fireKeyAlt("ArrowDown");
+    expect(root.children.map((n) => n.id)).toEqual([b.id, a.id]);
+    fireKeyAlt("ArrowUp");
+    expect(root.children.map((n) => n.id)).toEqual([a.id, b.id]);
+  });
+
+  it("collapses and expands a subtree via its toggle, hiding/showing descendants", () => {
+    const { root, child } = buildTree();
+    const grandchild = addChild(child, "Grandchild");
+    startApp(container, root);
+
+    expect(container.querySelector(`[data-node-id="${grandchild.id}"]`)).not.toBeNull();
+
+    const toggle = nodeEl(container, child.id).closest(".mm-node")!.querySelector(".mm-collapse-toggle")!;
+    fireClick(toggle, 100, 100, 0);
+    expect(child.collapsed).toBe(true);
+    expect(container.querySelector(`[data-node-id="${grandchild.id}"]`)).toBeNull();
+
+    fireClick(nodeEl(container, child.id).closest(".mm-node")!.querySelector(".mm-collapse-toggle")!, 100, 100, 0);
+    expect(child.collapsed).toBe(false);
+    expect(container.querySelector(`[data-node-id="${grandchild.id}"]`)).not.toBeNull();
+  });
+
+  it("opens a notes editor on 'n', commits on blur, and shows a badge", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("n");
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea.mm-notes-input")!;
+    expect(textarea).not.toBeNull();
+    textarea.value = "Some notes";
+    textarea.dispatchEvent(new Event("blur"));
+
+    expect(child.notes).toBe("Some notes");
+    expect(nodeEl(container, child.id).querySelector(".mm-notes-badge")).not.toBeNull();
+  });
+
+  it("cancels notes editing on Escape without committing", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("n");
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea.mm-notes-input")!;
+    textarea.value = "Discard me";
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    expect(child.notes).toBeUndefined();
+    expect(container.querySelector("textarea.mm-notes-input")).toBeNull();
+  });
+
+  it("sets an icon on 'i' that shows up alongside the node's text", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("i");
+    const input = container.querySelector<HTMLInputElement>("input.mm-inline-input")!;
+    input.value = "🚀";
+    input.dispatchEvent(new Event("blur"));
+
+    expect(child.icon).toBe("🚀");
+    expect(nodeEl(container, child.id).textContent).toContain("🚀");
+  });
+
+  it("sets a link on 'l' that shows a clickable badge", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("l");
+    const input = container.querySelector<HTMLInputElement>("input.mm-inline-input")!;
+    input.value = "https://example.com";
+    input.dispatchEvent(new Event("blur"));
+
+    expect(child.link).toBe("https://example.com");
+    expect(nodeEl(container, child.id).querySelector(".mm-link-badge")).not.toBeNull();
   });
 });

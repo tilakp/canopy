@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addChild, createNode } from "./model";
-import { renderMindMap, type EdgeStyle } from "./render";
+import { renderMindMap, computeFitCamera, type EdgeStyle } from "./render";
 
 let container: HTMLElement;
 
@@ -19,7 +19,16 @@ function render(root: ReturnType<typeof createNode>, edgeStyle: EdgeStyle = "cur
     setup(),
     root,
     { selectedId: null, editingId: null, edgeStyle },
-    { onEditCommit() {}, onEditCancel() {} },
+    {
+      onEditCommit() {},
+      onEditCancel() {},
+      onNotesCommit() {},
+      onNotesCancel() {},
+      onIconCommit() {},
+      onIconCancel() {},
+      onLinkCommit() {},
+      onLinkCancel() {},
+    },
   );
 }
 
@@ -75,5 +84,26 @@ describe("renderMindMap", () => {
     const straightPath = container.querySelector(".mm-edge")?.getAttribute("d") ?? "";
     expect(straightPath).not.toContain("C");
     expect(straightPath).toContain("L");
+  });
+});
+
+describe("computeFitCamera", () => {
+  it("scales down and centers content larger than the viewport", () => {
+    const bbox = new DOMRect(0, 0, 1600, 400);
+    const camera = computeFitCamera(bbox, { width: 800, height: 600 });
+    expect(camera.scale).toBeCloseTo((800 / 1600) * 0.9);
+    expect(camera.x).toBeCloseTo(400 - 800 * camera.scale);
+    expect(camera.y).toBeCloseTo(300 - 200 * camera.scale);
+  });
+
+  it("never scales up past 1x for content smaller than the viewport", () => {
+    const bbox = new DOMRect(0, 0, 100, 50);
+    const camera = computeFitCamera(bbox, { width: 800, height: 600 });
+    expect(camera.scale).toBe(1);
+  });
+
+  it("falls back to an identity camera for an empty/zero-size bbox", () => {
+    const camera = computeFitCamera(new DOMRect(0, 0, 0, 0), { width: 800, height: 600 });
+    expect(camera).toEqual({ x: 400, y: 300, scale: 1 });
   });
 });

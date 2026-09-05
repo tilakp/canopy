@@ -16,6 +16,9 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Agent fork worktrees (temporary, created/removed by the harness)
+.claude/
 .DS_Store
 *.suo
 *.ntvs*

@@ -7,6 +7,10 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   test: {
     environment: "jsdom",
+    // Exclude fork-agent worktrees (.claude/worktrees/**), which live inside
+    // the project directory and would otherwise get swept into the same
+    // test run as this tree's own src/*.test.ts files.
+    exclude: ["**/node_modules/**", "**/.claude/**"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

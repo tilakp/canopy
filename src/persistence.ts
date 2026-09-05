@@ -19,6 +19,10 @@ export async function saveToFile(root: MindMapNode, existingPath: string | null)
 export async function loadFromFile(): Promise<{ root: MindMapNode; path: string } | null> {
   const path = await open({ multiple: false, filters: FILE_FILTERS });
   if (!path || Array.isArray(path)) return null;
+  return loadFromPath(path);
+}
+
+export async function loadFromPath(path: string): Promise<{ root: MindMapNode; path: string }> {
   const text = await readTextFile(path);
   const root = JSON.parse(text) as MindMapNode;
   return { root, path };

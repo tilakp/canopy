@@ -38,12 +38,18 @@ const PALETTE = ["#4C6EF5", "#12B886", "#F59F00", "#E64980", "#7048E8", "#15AABF
 // and jsdom-based tests fake it); it just needs each node's box size.
 export type GetSize = (node: MindMapNode) => NodeSize;
 
+// A collapsed node's children stay in the data but are hidden from layout,
+// so its subtree occupies only its own box.
+function visibleChildren(node: MindMapNode): MindMapNode[] {
+  return node.collapsed ? [] : node.children;
+}
+
 function subtreeHeight(node: MindMapNode, getSize: GetSize): number {
   const ownHeight = getSize(node).height;
-  if (node.children.length === 0) return ownHeight;
+  const children = visibleChildren(node);
+  if (children.length === 0) return ownHeight;
   const childrenHeight =
-    node.children.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) +
-    V_GAP * (node.children.length - 1);
+    children.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) + V_GAP * (children.length - 1);
   return Math.max(ownHeight, childrenHeight);
 }
 
@@ -79,12 +85,12 @@ function layoutSubtree(
     color,
   });
 
+  const children = visibleChildren(node);
   const childX = ox + size.width + H_GAP;
   const childrenHeight =
-    node.children.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) +
-    V_GAP * (node.children.length - 1);
+    children.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) + V_GAP * (children.length - 1);
   let cursorY = oyTop + (height - childrenHeight) / 2;
-  for (const child of node.children) {
+  for (const child of children) {
     layoutSubtree(child, childX, cursorY, depth + 1, color, getSize, positions, edges);
     edges.push({ fromId: node.id, toId: child.id });
     cursorY += subtreeHeight(child, getSize) + V_GAP;
@@ -109,16 +115,16 @@ export function computeLayout(root: MindMapNode, getSize: GetSize): LayoutResult
     side: "root",
     color: root.color ?? ROOT_COLOR,
   });
-  if (root.children.length === 0) {
+  const rootChildren = visibleChildren(root);
+  if (rootChildren.length === 0) {
     return { positions, edges };
   }
 
   const totalHeight =
-    root.children.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) +
-    V_GAP * (root.children.length - 1);
+    rootChildren.reduce((sum, child) => sum + subtreeHeight(child, getSize), 0) + V_GAP * (rootChildren.length - 1);
 
   let cursorY = -totalHeight / 2;
-  root.children.forEach((child, i) => {
+  rootChildren.forEach((child, i) => {
     const startColor = child.color ?? PALETTE[i % PALETTE.length];
     layoutSubtree(child, rootSize.width + H_GAP, cursorY, 1, startColor, getSize, positions, edges);
     edges.push({ fromId: root.id, toId: child.id });

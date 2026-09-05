@@ -1,16 +1,25 @@
 import {
   addChild,
+  clearOffsets,
   findNode,
   findParent,
+  moveSibling,
   removeNode,
+  reparentNode,
   setColor,
+  setIcon,
+  setLink,
+  setNotes,
+  toggleCollapsed,
   updateText,
   type MindMapNode,
 } from "./model";
-import { renderMindMap, type Camera, type EdgeStyle } from "./render";
+import { renderMindMap, computeFitCamera, type Camera, type EdgeStyle } from "./render";
 import { createToolbar } from "./toolbar";
 import { createHistory } from "./history";
 import { saveToFile, loadFromFile } from "./persistence";
+import { openLink } from "./links";
+import { exportMap } from "./exportFile";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
@@ -24,15 +33,42 @@ type DragState =
   | { type: "pan"; startX: number; startY: number; startCamera: Camera }
   | null;
 
-export function startApp(container: HTMLElement, initialRoot: MindMapNode): void {
+export interface AppHandle {
+  openRoot(root: MindMapNode, path: string): void;
+  // Multiple maps share one window's global (window-level) key/resize
+  // listeners across every open document's startApp instance — only the
+  // active one should act on them. The container itself is what actually
+  // shows/hides (see workspace.ts), so pointer/wheel listeners (scoped to
+  // the container) don't need this: a hidden container gets no such events.
+  setActive(active: boolean): void;
+  getTitle(): string;
+  // Most visual state (CSS custom properties) updates live across every
+  // open document the instant the theme changes, but a node's pastel leaf
+  // fill is computed once per render into an inline SVG attribute — this
+  // forces a fresh render so that color picks up the new theme too.
+  forceRender(): void;
+}
+
+export function startApp(
+  container: HTMLElement,
+  initialRoot: MindMapNode,
+  initialFilePath: string | null = null,
+  onChange?: () => void,
+): AppHandle {
   let root = initialRoot;
+  let isActive = true;
   let selectedId: string | null = null;
   let editingId: string | null = null;
+  let notesEditingId: string | null = null;
+  let iconEditingId: string | null = null;
+  let linkEditingId: string | null = null;
   let edgeStyle: EdgeStyle = "curved";
   let camera: Camera | undefined;
   let dragState: DragState = null;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
-  let filePath: string | null = null;
+  let filePath: string | null = initialFilePath;
+  let lastContentBBox = new DOMRect();
+  let dropTargetId: string | null = null;
 
   const history = createHistory(structuredClone(root));
   function commit(): void {
@@ -67,13 +103,22 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
     onRedo: () => void performRedo(),
     onSave: () => void performSave(),
     onOpen: () => void performOpen(),
+    onTidy: () => {
+      clearOffsets(root);
+      commit();
+      render();
+    },
+    onZoomToFit: () => performZoomToFit(),
+    onZoomIn: () => performZoomBy(ZOOM_STEP),
+    onZoomOut: () => performZoomBy(1 / ZOOM_STEP),
+    onExport: () => void performExport(),
   });
 
   function render(): void {
     const result = renderMindMap(
       canvasEl,
       root,
-      { selectedId, editingId, edgeStyle, camera },
+      { selectedId, editingId, notesEditingId, iconEditingId, linkEditingId, edgeStyle, camera, dropTargetId },
       {
         onEditCommit(id, text) {
           updateText(root, id, text.trim() || "Untitled");
@@ -87,9 +132,46 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
           render();
           container.focus();
         },
+        onNotesCommit(id, notes) {
+          setNotes(root, id, notes);
+          commit();
+          notesEditingId = null;
+          render();
+          container.focus();
+        },
+        onNotesCancel() {
+          notesEditingId = null;
+          render();
+          container.focus();
+        },
+        onIconCommit(id, icon) {
+          setIcon(root, id, icon);
+          commit();
+          iconEditingId = null;
+          render();
+          container.focus();
+        },
+        onIconCancel() {
+          iconEditingId = null;
+          render();
+          container.focus();
+        },
+        onLinkCommit(id, link) {
+          setLink(root, id, link);
+          commit();
+          linkEditingId = null;
+          render();
+          container.focus();
+        },
+        onLinkCancel() {
+          linkEditingId = null;
+          render();
+          container.focus();
+        },
       },
     );
     camera = result.camera;
+    lastContentBBox = result.contentBBox;
 
     const hasSelection = selectedId !== null && selectedId !== root.id;
     toolbar.update({
@@ -99,6 +181,7 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
       canUndo: history.canUndo(),
       canRedo: history.canRedo(),
     });
+    onChange?.();
   }
 
   function startEditing(id: string): void {
@@ -128,6 +211,45 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
     if (result) loadRoot(result.root, result.path);
   }
 
+  async function performExport(): Promise<void> {
+    const svgEl = canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
+    if (!svgEl) return;
+    await exportMap(root, svgEl, lastContentBBox);
+  }
+
+  // The element under the cursor during a node drag, if it's a valid
+  // reparent target — not the dragged node itself, and not one of its own
+  // descendants (that would create a cycle).
+  function findDropTargetId(clientX: number, clientY: number, draggedId: string): string | null {
+    // jsdom (used by tests) doesn't implement elementFromPoint at all — it
+    // throws rather than returning null, unlike a real browser.
+    let hit: Element | null;
+    try {
+      hit = document.elementFromPoint(clientX, clientY);
+    } catch {
+      return null;
+    }
+    const el = hit?.closest<HTMLElement>("[data-node-id]");
+    const id = el?.dataset.nodeId;
+    if (!id || id === draggedId) return null;
+    const draggedNode = findNode(root, draggedId)!;
+    if (findNode(draggedNode, id)) return null;
+    return id;
+  }
+
+  function performZoomToFit(): void {
+    camera = computeFitCamera(lastContentBBox, container.getBoundingClientRect());
+    render();
+  }
+
+  const ZOOM_STEP = 1.25;
+
+  function performZoomBy(factor: number): void {
+    if (!camera) return;
+    const rect = container.getBoundingClientRect();
+    zoomAround(camera, camera.scale * factor, rect.width / 2, rect.height / 2);
+  }
+
   function performUndo(): void {
     const snapshot = history.undo();
     if (!snapshot) return;
@@ -147,7 +269,15 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
   }
 
   container.addEventListener("pointerdown", (e) => {
-    if ((e.target as HTMLElement).tagName === "INPUT") return;
+    if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+
+    const linkBadge = (e.target as Element).closest(".mm-link-badge");
+    if (linkBadge) {
+      const nodeId = linkBadge.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+      const node = nodeId ? findNode(root, nodeId) : null;
+      if (node?.link) void openLink(node.link);
+      return;
+    }
     // Let toolbar buttons behave like normal buttons — don't preventDefault
     // (which would suppress the click event they rely on) or treat this as
     // a canvas pan.
@@ -159,7 +289,18 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
     // immediately commits and closes the edit we just opened.
     e.preventDefault();
     container.focus();
-    if (editingId) return;
+    if (editingId || notesEditingId || iconEditingId || linkEditingId) return;
+
+    const collapseToggle = (e.target as Element).closest(".mm-collapse-toggle");
+    if (collapseToggle) {
+      const nodeId = collapseToggle.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+      if (nodeId) {
+        toggleCollapsed(root, nodeId);
+        commit();
+        render();
+      }
+      return;
+    }
 
     const addBtn = (e.target as Element).closest(".mm-add-btn");
     if (addBtn) {
@@ -229,6 +370,7 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
         dx: dragState.startOffset.dx + dxPx / camera!.scale,
         dy: dragState.startOffset.dy + dyPx / camera!.scale,
       };
+      dropTargetId = findDropTargetId(e.clientX, e.clientY, dragState.id);
     } else {
       camera = { ...dragState.startCamera, x: dragState.startCamera.x + dxPx, y: dragState.startCamera.y + dyPx };
     }
@@ -236,35 +378,118 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
   });
 
   container.addEventListener("pointerup", () => {
-    // A node drag mutates the tree (offset), so it's one undo step — but
-    // only if it actually moved (a plain click that never dispatched a
-    // pointermove leaves offset untouched, and shouldn't clutter history).
-    if (dragState?.type === "node") commit();
+    // A node drag mutates the tree (offset, or a reparent), so it's one
+    // undo step — but only if it actually moved (a plain click that never
+    // dispatched a pointermove leaves offset untouched, and shouldn't
+    // clutter history).
+    if (dragState?.type === "node") {
+      if (dropTargetId) reparentNode(root, dragState.id, dropTargetId);
+      commit();
+    }
     dragState = null;
+    dropTargetId = null;
+    render();
   });
   container.addEventListener("pointercancel", () => {
     dragState = null;
+    dropTargetId = null;
   });
 
+  // Multiplier applied to both wheel-driven and native pinch-gesture zoom
+  // deltas so a pinch covers more zoom range per finger movement — plain
+  // 1:1 tracking of the OS-reported deltas felt too slow.
+  const PINCH_ZOOM_SENSITIVITY = 1.6;
+
+  // Zooms so that the point at (anchorX, anchorY) in the *base* camera
+  // (before this zoom) stays under that same screen point afterward.
+  // Shared by wheel-scroll, WebKit pinch gestures, and the toolbar's
+  // explicit zoom in/out/fit buttons.
+  function zoomAround(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
+    const scale = clamp(targetScale, ZOOM_MIN, ZOOM_MAX);
+    const worldX = (anchorX - baseCamera.x) / baseCamera.scale;
+    const worldY = (anchorY - baseCamera.y) / baseCamera.scale;
+    camera = { scale, x: anchorX - worldX * scale, y: anchorY - worldY * scale };
+    render();
+  }
+
+  // Trackpad pinch on Chromium (incl. our own dev-server test target)
+  // delivers ctrlKey wheel events at a much higher rate than the browser can
+  // usefully re-render — same issue as WebKit's gesturechange below.
+  // Rendering synchronously per event made this choppy, so deltas are
+  // accumulated and applied as a single zoomAround once per animation
+  // frame, relative to a base camera snapshotted at the start of that
+  // batch (not the live `camera`, which the pending frame hasn't updated
+  // yet — reading it mid-batch would silently drop the earlier deltas).
+  let pendingWheelFrame: number | null = null;
+  let wheelBaseCamera: Camera | null = null;
+  let wheelAccumScale = 1;
+  let wheelAnchorX = 0;
+  let wheelAnchorY = 0;
   container.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
       if (!camera) return;
       const rect = container.getBoundingClientRect();
-      const cursorX = e.clientX - rect.left;
-      const cursorY = e.clientY - rect.top;
-      const worldX = (cursorX - camera.x) / camera.scale;
-      const worldY = (cursorY - camera.y) / camera.scale;
-      const scale = clamp(camera.scale * Math.pow(1.0015, -e.deltaY), ZOOM_MIN, ZOOM_MAX);
-      camera = { scale, x: cursorX - worldX * scale, y: cursorY - worldY * scale };
-      render();
+      wheelAnchorX = e.clientX - rect.left;
+      wheelAnchorY = e.clientY - rect.top;
+      if (pendingWheelFrame === null) {
+        wheelBaseCamera = camera;
+        wheelAccumScale = 1;
+      }
+      wheelAccumScale *= Math.pow(1.0015, -e.deltaY * PINCH_ZOOM_SENSITIVITY);
+      if (pendingWheelFrame === null) {
+        pendingWheelFrame = requestAnimationFrame(() => {
+          pendingWheelFrame = null;
+          zoomAround(wheelBaseCamera!, wheelBaseCamera!.scale * wheelAccumScale, wheelAnchorX, wheelAnchorY);
+        });
+      }
     },
     { passive: false },
   );
 
+  // Safari/WKWebView (the real desktop app on macOS) reports trackpad pinch
+  // as these WebKit-only gesture events, not as wheel events with ctrlKey
+  // the way Chromium does — so pinch-to-zoom needs its own handler or it
+  // silently does nothing (or triggers the webview's own native page zoom,
+  // since nothing here would preventDefault it). `scale` on these events is
+  // cumulative since gesturestart, not incremental, so the base camera is
+  // snapshotted once at gesturestart and every gesturechange recomputes
+  // from that same snapshot rather than compounding on the live camera.
+  let gestureBaseCamera: Camera | null = null;
+  // gesturechange fires far more often than the browser can usefully
+  // re-render (much higher rate than wheel ticks) — rendering synchronously
+  // on every single event is what made pinch feel choppy, since this app
+  // rebuilds the whole SVG from scratch per render. Coalescing to at most
+  // one render per animation frame fixes that without changing the math.
+  let pendingGestureFrame: number | null = null;
+  container.addEventListener("gesturestart", ((e: Event) => {
+    e.preventDefault();
+    gestureBaseCamera = camera ? { ...camera } : null;
+  }) as EventListener);
+  container.addEventListener("gesturechange", ((e: Event) => {
+    e.preventDefault();
+    const ge = e as unknown as { scale: number; clientX: number; clientY: number };
+    const base = gestureBaseCamera;
+    if (!base) return;
+    const rect = container.getBoundingClientRect();
+    const targetScale = base.scale * Math.pow(ge.scale, PINCH_ZOOM_SENSITIVITY);
+    const anchorX = ge.clientX - rect.left;
+    const anchorY = ge.clientY - rect.top;
+    if (pendingGestureFrame !== null) cancelAnimationFrame(pendingGestureFrame);
+    pendingGestureFrame = requestAnimationFrame(() => {
+      pendingGestureFrame = null;
+      zoomAround(base, targetScale, anchorX, anchorY);
+    });
+  }) as EventListener);
+  container.addEventListener("gestureend", ((e: Event) => {
+    e.preventDefault();
+    gestureBaseCamera = null;
+  }) as EventListener);
+
   let lastRect = container.getBoundingClientRect();
   window.addEventListener("resize", () => {
+    if (!isActive) return;
     const rect = container.getBoundingClientRect();
     if (camera) {
       camera = {
@@ -278,20 +503,25 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
   });
 
   window.addEventListener("keydown", (e) => {
+    if (!isActive) return;
     // Global safety net: Escape always exits editing, even if the edit
     // input itself never picked up focus for some reason.
-    if (e.key === "Escape" && editingId) {
+    if (e.key === "Escape" && (editingId || notesEditingId || iconEditingId || linkEditingId)) {
       e.preventDefault();
       editingId = null;
+      notesEditingId = null;
+      iconEditingId = null;
+      linkEditingId = null;
       render();
       container.focus();
       return;
     }
 
+    const isEditingAnything = editingId || notesEditingId || iconEditingId || linkEditingId;
     const cmd = e.metaKey || e.ctrlKey;
     // While editing, do nothing at all here (crucially, no preventDefault)
     // so the input's own native undo handles text edits instead.
-    if (cmd && e.key.toLowerCase() === "z" && !editingId) {
+    if (cmd && e.key.toLowerCase() === "z" && !isEditingAnything) {
       e.preventDefault();
       if (e.shiftKey) performRedo();
       else performUndo();
@@ -307,10 +537,66 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
       void performOpen();
       return;
     }
+    if (cmd && (e.key === "=" || e.key === "+")) {
+      e.preventDefault();
+      performZoomBy(ZOOM_STEP);
+      return;
+    }
+    if (cmd && e.key === "-") {
+      e.preventDefault();
+      performZoomBy(1 / ZOOM_STEP);
+      return;
+    }
 
-    if (editingId) return;
+    if (isEditingAnything) return;
 
-    if (e.key === "Tab") {
+    if (e.key === "n" || e.key === "i" || e.key === "l") {
+      if (!selectedId) return;
+      e.preventDefault();
+      if (e.key === "n") notesEditingId = selectedId;
+      else if (e.key === "i") iconEditingId = selectedId;
+      else linkEditingId = selectedId;
+      render();
+    } else if (e.key === "0") {
+      e.preventDefault();
+      performZoomToFit();
+    } else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      if (!selectedId) return;
+      if (moveSibling(root, selectedId, e.key === "ArrowDown" ? 1 : -1)) {
+        commit();
+        render();
+      }
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!selectedId) {
+        selectedId = root.id;
+        render();
+        return;
+      }
+      const parent = findParent(root, selectedId);
+      if (!parent) return;
+      const siblings = parent.children;
+      const index = siblings.findIndex((n) => n.id === selectedId);
+      const nextIndex = clamp(index + (e.key === "ArrowDown" ? 1 : -1), 0, siblings.length - 1);
+      selectedId = siblings[nextIndex].id;
+      render();
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (!selectedId) return;
+      const parent = findParent(root, selectedId);
+      if (parent) {
+        selectedId = parent.id;
+        render();
+      }
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const node = selectedId ? findNode(root, selectedId) : root;
+      if (node && node.children.length > 0) {
+        selectedId = node.children[0].id;
+        render();
+      }
+    } else if (e.key === "Tab") {
       e.preventDefault();
       const parent = selectedId ? (findNode(root, selectedId) ?? root) : root;
       const child = addChild(parent, "");
@@ -335,6 +621,16 @@ export function startApp(container: HTMLElement, initialRoot: MindMapNode): void
 
   render();
   container.focus();
+
+  return {
+    openRoot: loadRoot,
+    setActive(active) {
+      isActive = active;
+      if (active) container.focus();
+    },
+    getTitle: () => root.text,
+    forceRender: () => render(),
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -12,7 +12,7 @@ body,
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  background: #f8f8fa;
+  background: var(--mm-bg, #f8f8fa);
 }
 
 #app {
@@ -44,8 +44,8 @@ body {
 }
 
 .mm-root-box {
-  fill: #ffffff;
-  stroke: #e9e9ee;
+  fill: var(--mm-surface, #ffffff);
+  stroke: var(--mm-border, #e9e9ee);
   stroke-width: 1;
   filter: drop-shadow(0 1px 2px rgb(16 16 20 / 0.04)) drop-shadow(0 2px 6px rgb(16 16 20 / 0.06));
 }
@@ -59,7 +59,7 @@ body {
   font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  fill: #1f1f26;
+  fill: var(--mm-text, #1f1f26);
 }
 
 .mm-node-box {
@@ -72,10 +72,17 @@ body {
   stroke: #4c6ef5;
 }
 
+.mm-drop-target .mm-node-box,
+.mm-drop-target .mm-root-box {
+  stroke: #12b886;
+  stroke-width: 2.5;
+  stroke-dasharray: 5 3;
+}
+
 .mm-node-text {
   font-size: 14.5px;
   font-weight: 500;
-  fill: #33333b;
+  fill: var(--mm-text-secondary, #33333b);
 }
 
 .mm-root-text.mm-editing,
@@ -92,13 +99,13 @@ body {
 }
 
 .mm-add-btn circle {
-  fill: #ffffff;
-  stroke: #c7c9d1;
+  fill: var(--mm-surface, #ffffff);
+  stroke: var(--mm-border-strong, #c7c9d1);
   stroke-width: 1;
 }
 
 .mm-add-btn path {
-  stroke: #6b6d76;
+  stroke: var(--mm-text-muted, #6b6d76);
   stroke-width: 1.5;
   stroke-linecap: round;
 }
@@ -123,33 +130,99 @@ body {
   stroke: #ffffff;
 }
 
+.mm-collapse-toggle circle {
+  fill: var(--mm-surface, #ffffff);
+  stroke: var(--mm-border-strong, #c7c9d1);
+  stroke-width: 1;
+}
+
+.mm-collapse-toggle path {
+  stroke: var(--mm-text-muted, #6b6d76);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.mm-collapse-toggle {
+  cursor: pointer;
+}
+
+.mm-collapse-toggle:hover circle {
+  fill: #4c6ef5;
+  stroke: #4c6ef5;
+}
+
+.mm-collapse-toggle:hover path {
+  stroke: #ffffff;
+}
+
 .mm-edit-input {
   position: absolute;
   font-family: inherit;
   border: 1.5px solid #4c6ef5;
   border-radius: 8px;
   padding: 2px 7px;
-  background: #ffffff;
-  color: #1f1f26;
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1f1f26);
   outline: none;
   min-width: 40px;
   box-shadow: 0 0 0 3px rgb(76 110 245 / 0.15);
+}
+
+.mm-notes-input {
+  position: absolute;
+  font-family: inherit;
+  font-size: 13px;
+  border: 1.5px solid #4c6ef5;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1f1f26);
+  outline: none;
+  width: 200px;
+  height: 90px;
+  resize: none;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.12);
+}
+
+.mm-inline-input {
+  position: absolute;
+  font-family: inherit;
+  font-size: 13px;
+  border: 1.5px solid #4c6ef5;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1f1f26);
+  outline: none;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.12);
+}
+
+.mm-notes-badge,
+.mm-link-badge {
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.mm-link-badge {
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 /* Toolbar */
 
 .mm-toolbar {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  background: rgb(255 255 255 / 0.85);
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
   backdrop-filter: blur(8px);
-  border: 1px solid #ececf1;
+  border: 1px solid var(--mm-border, #ececf1);
   border-radius: 12px;
   box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
 }
@@ -163,7 +236,7 @@ body {
 .mm-toolbar-divider {
   width: 1px;
   height: 20px;
-  background: #e5e5ea;
+  background: var(--mm-border, #e5e5ea);
 }
 
 .mm-toolbar[data-disabled="true"] .mm-swatch {
@@ -185,24 +258,24 @@ body {
 }
 
 .mm-swatch[data-active="true"] {
-  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #4c6ef5;
+  box-shadow: 0 0 0 2px var(--mm-surface, #ffffff), 0 0 0 4px #4c6ef5;
 }
 
 .mm-edge-btn {
   width: 28px;
   height: 24px;
-  border: 1px solid #e5e5ea;
+  border: 1px solid var(--mm-border, #e5e5ea);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--mm-surface, #ffffff);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6b6d76;
+  color: var(--mm-text-muted, #6b6d76);
 }
 
 .mm-edge-btn[data-active="true"] {
-  background: #eef1ff;
+  background: var(--mm-accent-soft, #eef1ff);
   border-color: #4c6ef5;
   color: #4c6ef5;
 }
@@ -215,4 +288,103 @@ body {
 .mm-edge-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* Multiple maps */
+
+.mm-doc-container {
+  position: absolute;
+  inset: 0;
+}
+
+.mm-tabstrip {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 28px);
+  padding: 4px;
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--mm-border, #ececf1);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+  overflow-x: auto;
+}
+
+.mm-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mm-text-muted, #6b6d76);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 160px;
+}
+
+.mm-tab[data-active="true"] {
+  background: var(--mm-accent-soft, #eef1ff);
+  color: var(--mm-text, #1f1f26);
+}
+
+.mm-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-tab-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.mm-tab-close:hover {
+  opacity: 1;
+}
+
+.mm-tab-new {
+  border: none;
+  background: transparent;
+  color: var(--mm-text-muted, #6b6d76);
+  font-size: 16px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mm-tab-new:hover {
+  background: var(--mm-hover-neutral, #f1f1f5);
+}
+
+/* Dark theme — toggled via data-theme on <html> (see src/theme.ts). Every
+   rule above reads its light-mode value as a var() fallback, so this block
+   only needs to define the variables that actually differ in dark mode. */
+:root[data-theme="dark"] {
+  --mm-bg: #1c1c22;
+  --mm-surface: #26262e;
+  --mm-border: #3a3a44;
+  --mm-border-strong: #4a4a56;
+  --mm-text: #f0f0f3;
+  --mm-text-secondary: #d4d4db;
+  --mm-text-muted: #9a9aa5;
+  --mm-panel-bg: rgb(30 30 36 / 0.85);
+  --mm-accent-soft: #2a2f52;
+  --mm-hover-neutral: #32323c;
 }
