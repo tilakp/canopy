@@ -3,13 +3,13 @@ import { computeLayout, type Edge, type NodeLayout } from "./layout";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-const ROOT_PADDING_X = 20;
-const ROOT_PADDING_Y = 14;
+const ROOT_PADDING_X = 24;
+const ROOT_PADDING_Y = 16;
 const LEAF_PADDING_X = 8;
-const LEAF_PADDING_Y = 5;
-const TEXT_OFFSET_Y = 6;
-const ROOT_FONT_SIZE = 20;
-const LEAF_FONT_SIZE = 15;
+const LEAF_PADDING_Y = 6;
+const TEXT_OFFSET_Y = 7;
+const ROOT_FONT_SIZE = 19;
+const LEAF_FONT_SIZE = 14.5;
 
 export interface Camera {
   x: number;
@@ -49,10 +49,10 @@ export function renderMindMap(
   const { positions, edges } = computeLayout(root);
   const rootLayout = positions.get(root.id)!;
 
-  const rootHalfWidth = renderRootNode(content, root, rootLayout, state.selectedId, state.editingId);
+  const rootAnchorX = renderRootNode(content, root, rootLayout, state.selectedId, state.editingId);
 
   for (const edge of edges) {
-    content.appendChild(renderEdge(edge, positions, rootHalfWidth));
+    content.appendChild(renderEdge(edge, positions, rootAnchorX));
   }
 
   for (const node of iterateNodes(root)) {
@@ -102,8 +102,8 @@ function computeInitialCamera(container: HTMLElement, content: SVGGElement): Cam
   return { x, y, scale: 1 };
 }
 
-// Renders the root's box + label and returns half the box width, which
-// edges need to know where they leave the box on each side.
+// Renders the root's box + label and returns the x-coordinate of its right
+// edge, which is where every outgoing edge leaves from.
 function renderRootNode(
   content: SVGGElement,
   node: MindMapNode,
@@ -141,7 +141,7 @@ function renderRootNode(
   rect.setAttribute("width", String(halfWidth * 2));
   rect.setAttribute("height", String(bbox.height + ROOT_PADDING_Y * 2));
 
-  return halfWidth;
+  return layout.x + halfWidth;
 }
 
 function renderLeafNode(
@@ -168,7 +168,7 @@ function renderLeafNode(
   const text = document.createElementNS(SVG_NS, "text");
   text.setAttribute("x", String(layout.x));
   text.setAttribute("y", String(layout.y - TEXT_OFFSET_Y));
-  text.setAttribute("text-anchor", layout.side === "left" ? "end" : "start");
+  text.setAttribute("text-anchor", "start");
   text.setAttribute("class", `mm-node-text${isEditing ? " mm-editing" : ""}`);
   text.textContent = node.text;
   g.appendChild(text);
@@ -180,12 +180,11 @@ function renderLeafNode(
   hit.setAttribute("height", String(bbox.height + LEAF_PADDING_Y * 2));
 }
 
-function renderEdge(edge: Edge, positions: Map<string, NodeLayout>, rootHalfWidth: number): SVGPathElement {
+function renderEdge(edge: Edge, positions: Map<string, NodeLayout>, rootAnchorX: number): SVGPathElement {
   const from = positions.get(edge.fromId)!;
   const to = positions.get(edge.toId)!;
-  const dir = to.side === "left" ? -1 : 1;
 
-  const fromX = from.side === "root" ? dir * rootHalfWidth : from.x;
+  const fromX = from.side === "root" ? rootAnchorX : from.x;
   const fromY = from.y;
   const midX = (fromX + to.x) / 2;
 
@@ -218,9 +217,6 @@ function renderEditOverlay(
   if (isRoot) {
     input.style.textAlign = "center";
     input.style.transform = "translate(-50%, -50%)";
-  } else if (layout.side === "left") {
-    input.style.textAlign = "right";
-    input.style.transform = "translate(-100%, -70%)";
   } else {
     input.style.textAlign = "left";
     input.style.transform = "translate(0, -70%)";

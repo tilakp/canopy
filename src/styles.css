@@ -12,7 +12,7 @@ body,
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  background: #f4f3f9;
+  background: #f8f8fa;
 }
 
 #app {
@@ -36,25 +36,27 @@ body {
 
 .mm-root-box {
   fill: #ffffff;
-  stroke: #d8d6e6;
+  stroke: #e9e9ee;
   stroke-width: 1;
-  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.12));
+  filter: drop-shadow(0 1px 2px rgb(16 16 20 / 0.04)) drop-shadow(0 2px 6px rgb(16 16 20 / 0.06));
 }
 
 .mm-root.mm-selected .mm-root-box {
-  stroke: #4a90d9;
-  stroke-width: 2;
+  stroke: #4c6ef5;
+  stroke-width: 1.5;
 }
 
 .mm-root-text {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
-  fill: #2a2a35;
+  letter-spacing: -0.01em;
+  fill: #1f1f26;
 }
 
 .mm-node-text {
-  font-size: 15px;
-  fill: #2a2a35;
+  font-size: 14.5px;
+  font-weight: 500;
+  fill: #45454e;
 }
 
 .mm-node-hit {
@@ -62,11 +64,11 @@ body {
 }
 
 .mm-leaf.mm-selected .mm-node-hit {
-  fill: #dce8fa;
+  fill: #eef1ff;
 }
 
 .mm-leaf.mm-selected .mm-node-text {
-  fill: #1a5fb4;
+  fill: #4c6ef5;
 }
 
 .mm-root-text.mm-editing,
@@ -77,18 +79,20 @@ body {
 
 .mm-edge {
   fill: none;
-  stroke-width: 3;
+  stroke-width: 2;
   stroke-linecap: round;
+  opacity: 0.75;
 }
 
 .mm-edit-input {
   position: absolute;
   font-family: inherit;
-  border: 1px solid #4a90d9;
-  border-radius: 6px;
-  padding: 2px 6px;
+  border: 1.5px solid #4c6ef5;
+  border-radius: 8px;
+  padding: 2px 7px;
   background: #ffffff;
-  color: #2a2a35;
+  color: #1f1f26;
   outline: none;
   min-width: 40px;
+  box-shadow: 0 0 0 3px rgb(76 110 245 / 0.15);
 }

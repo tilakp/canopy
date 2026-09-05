@@ -53,16 +53,32 @@ describe("computeLayout", () => {
     expectNoOverlap(positions);
   });
 
-  it("balances branches across both sides instead of piling them on one", () => {
+  it("grows strictly rightward as depth increases, never left of the root", () => {
     const root = createNode("Root");
-    for (let i = 0; i < 6; i++) addChild(root, `Child ${i}`);
+    for (let i = 0; i < 3; i++) {
+      const branch = addChild(root, `Branch ${i}`);
+      addChild(branch, `Leaf ${i}`);
+    }
 
     const { positions } = computeLayout(root);
-    const sides = [...positions.values()].filter((p) => p.side !== "root").map((p) => p.side);
-    const leftCount = sides.filter((s) => s === "left").length;
-    const rightCount = sides.filter((s) => s === "right").length;
-    expect(leftCount).toBe(3);
-    expect(rightCount).toBe(3);
+    const byDepth = new Map<number, number[]>();
+    for (const { x, depth } of positions.values()) {
+      (byDepth.get(depth) ?? byDepth.set(depth, []).get(depth)!).push(x);
+    }
+
+    expect(byDepth.get(0)).toEqual([0]);
+    for (const x of byDepth.get(1) ?? []) expect(x).toBeGreaterThan(0);
+    for (const x of byDepth.get(2) ?? []) expect(x).toBeGreaterThan(byDepth.get(1)![0]);
+  });
+
+  it("centers top-level branches vertically on the root", () => {
+    const root = createNode("Root");
+    addChild(root, "A");
+    addChild(root, "B");
+
+    const { positions } = computeLayout(root);
+    const ys = [...positions.values()].filter((p) => p.depth === 1).map((p) => p.y);
+    expect(ys[0] + ys[1]).toBeCloseTo(0);
   });
 
   it("shifts a dragged node and its descendants by its offset", () => {
