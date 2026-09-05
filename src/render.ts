@@ -58,7 +58,7 @@ export function renderMindMap(
   for (const node of iterateNodes(root)) {
     if (node.id === root.id) continue;
     const layout = positions.get(node.id)!;
-    content.appendChild(renderLeafNode(node, layout, state.selectedId, state.editingId));
+    renderLeafNode(content, node, layout, state.selectedId, state.editingId);
   }
 
   const camera = state.camera ?? computeInitialCamera(container, content);
@@ -145,17 +145,19 @@ function renderRootNode(
 }
 
 function renderLeafNode(
+  content: SVGGElement,
   node: MindMapNode,
   layout: NodeLayout,
   selectedId: string | null,
   editingId: string | null,
-): SVGGElement {
+): void {
   const isSelected = selectedId === node.id;
   const isEditing = editingId === node.id;
 
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", `mm-node mm-leaf${isSelected ? " mm-selected" : ""}`);
   g.dataset.nodeId = node.id;
+  content.appendChild(g); // Attach before measuring text, so getBBox works.
 
   const hit = document.createElementNS(SVG_NS, "rect");
   hit.setAttribute("class", `mm-node-hit${isEditing ? " mm-editing" : ""}`);
@@ -176,8 +178,6 @@ function renderLeafNode(
   hit.setAttribute("y", String(bbox.y - LEAF_PADDING_Y));
   hit.setAttribute("width", String(bbox.width + LEAF_PADDING_X * 2));
   hit.setAttribute("height", String(bbox.height + LEAF_PADDING_Y * 2));
-
-  return g;
 }
 
 function renderEdge(edge: Edge, positions: Map<string, NodeLayout>, rootHalfWidth: number): SVGPathElement {

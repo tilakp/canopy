@@ -67,7 +67,6 @@ body {
 
 .mm-leaf.mm-selected .mm-node-text {
   fill: #1a5fb4;
-  font-weight: 600;
 }
 
 .mm-root-text.mm-editing,

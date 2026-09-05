@@ -97,7 +97,11 @@ export function startApp(container: HTMLElement, root: MindMapNode): void {
       dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
       render();
     }
-    container.setPointerCapture?.(e.pointerId);
+    try {
+      container.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No active pointer with this id (e.g. a synthetic event) — harmless.
+    }
   });
 
   container.addEventListener("pointermove", (e) => {
