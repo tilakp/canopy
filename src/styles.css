@@ -10,8 +10,15 @@ body,
 }
 
 body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(
+    --mm-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Helvetica,
+    Arial,
+    sans-serif
+  );
   background: var(--mm-bg, #f8f8fa);
 }
 
@@ -96,6 +103,15 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.75;
+}
+
+/* Focus mode: everything outside the focused branch fades out. Placed
+   after .mm-node/.mm-edge so it wins the same-specificity tie and actually
+   overrides their opacity (including the sketchy edge's inline attribute,
+   since a CSS class rule always beats a presentation attribute). */
+.mm-dimmed {
+  opacity: 0.18;
+  transition: opacity 0.15s;
 }
 
 .mm-add-btn circle {
@@ -208,6 +224,28 @@ body {
   cursor: pointer;
 }
 
+.mm-status-badge {
+  pointer-events: none;
+}
+
+.mm-status-badge circle {
+  fill: none;
+  stroke: var(--mm-text-muted, #6b6d76);
+  stroke-width: 1.5;
+}
+
+.mm-status-done circle {
+  fill: #12b886;
+  stroke: #12b886;
+}
+
+.mm-status-done path {
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* Toolbar */
 
 .mm-toolbar {
@@ -239,6 +277,63 @@ body {
   background: var(--mm-border, #e5e5ea);
 }
 
+.mm-search {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--mm-border, #ececf1);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+}
+
+/* Same specificity as the UA [hidden] rule, so without this the later
+   (page) stylesheet's display:flex above would win by source order and
+   the search bar would stay visible even while `hidden` is set. */
+.mm-search[hidden] {
+  display: none;
+}
+
+.mm-search-input {
+  border: none;
+  background: transparent;
+  color: var(--mm-text, #1f1f26);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  width: 140px;
+}
+
+.mm-search-count {
+  color: var(--mm-text-muted, #6b6d76);
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 48px;
+}
+
+.mm-search-btn {
+  border: none;
+  background: transparent;
+  color: var(--mm-text-muted, #6b6d76);
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mm-search-btn:hover {
+  background: var(--mm-hover-neutral, #f1f1f5);
+}
+
 .mm-toolbar[data-disabled="true"] .mm-swatch {
   opacity: 0.35;
   pointer-events: none;
@@ -259,6 +354,24 @@ body {
 
 .mm-swatch[data-active="true"] {
   box-shadow: 0 0 0 2px var(--mm-surface, #ffffff), 0 0 0 4px #4c6ef5;
+}
+
+.mm-swatch-custom {
+  display: block;
+  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+  position: relative;
+  overflow: hidden;
+}
+
+.mm-swatch-custom input[type="color"] {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  border: none;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .mm-edge-btn {
@@ -288,6 +401,85 @@ body {
 .mm-edge-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* Floating popovers (recent files, new-map templates) */
+
+.mm-popover-anchor {
+  position: relative;
+  display: flex;
+}
+
+.mm-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  min-width: 160px;
+  max-width: 240px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--mm-border, #ececf1);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+}
+
+/* Same specificity-tie gotcha as .mm-search[hidden] below — display:flex
+   above wins by source order over the UA [hidden] rule without this. */
+.mm-popover[hidden] {
+  display: none;
+}
+
+.mm-popover-item {
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-text, #1f1f26);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.mm-popover-item:hover {
+  background: var(--mm-hover-neutral, #f1f1f5);
+}
+
+.mm-popover-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--mm-text-muted, #6b6d76);
+}
+
+/* Minimap */
+
+.mm-minimap {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  z-index: 10;
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--mm-border, #ececf1);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+  overflow: hidden;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.mm-minimap-viewport {
+  fill: none;
+  stroke: #4c6ef5;
+  stroke-width: 1.5;
 }
 
 /* Multiple maps */
@@ -367,6 +559,24 @@ body {
   border-radius: 7px;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+.mm-font-select {
+  border: none;
+  background: transparent;
+  color: var(--mm-text-muted, #6b6d76);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  height: 26px;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 110px;
+}
+
+.mm-font-select:hover {
+  background: var(--mm-hover-neutral, #f1f1f5);
 }
 
 .mm-tab-new:hover {

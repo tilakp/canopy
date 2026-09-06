@@ -9,7 +9,7 @@ canvas, not a multi-view app). GitHub: https://github.com/tilakp/canopy
 ```sh
 bun install
 bun run tauri dev   # launch the desktop app (first run compiles Rust deps, ~1min)
-bun run test        # vitest, jsdom environment, ~40 tests, sub-second
+bun run test        # vitest, jsdom environment, ~124 tests, sub-second
 bunx tsc --noEmit    # type-check
 ```
 
@@ -24,20 +24,27 @@ nodes with word-wrapped text.
 
 | File | Responsibility |
 |---|---|
-| `src/model.ts` | The tree data structure (`MindMapNode`) and pure mutation helpers (`addChild`, `removeNode`, `updateText`, `setColor`, `setOffset`, `findNode`, `findParent`, `moveSibling`, `reparentNode`, `toggleCollapsed`, `setNotes`, `setLink`, `setIcon`, `clearOffsets`). No rendering or layout knowledge. |
+| `src/model.ts` | The tree data structure (`MindMapNode`) and pure mutation helpers (`addChild`, `removeNode`, `updateText`, `setColor`, `setOffset`, `findNode`, `findParent`, `moveSibling`, `reparentNode`, `toggleCollapsed`, `setNotes`, `setLink`, `setIcon`, `cycleStatus`, `setImage`, `clearOffsets`). No rendering or layout knowledge. A node's optional `status` (`"todo"`/`"done"`, cycled by `cycleStatus`) drives a small checklist badge in `render.ts`; its optional `image` (a data URL, set via `setImage`) is drawn as a fixed-size thumbnail whose height is folded into `render.ts`'s `buildVisuals()` box-sizing. |
 | `src/layout.ts` | `computeLayout(root, getSize)` — positions every node. Takes an **injected** `getSize(node) => {width, height}` callback rather than assuming fixed dimensions, so it doesn't need to know about text/DOM at all (this is what keeps it unit-testable in jsdom with a trivial fixed-size stub). Colors cascade from each top-level branch down through descendants, overridable per-subtree via `node.color`. A node's own manual drag `offset` shifts it and its descendants without disturbing sibling stacking. A `collapsed` node's children stay in the data but are treated as absent for sizing/positioning/edges (see `visibleChildren`). |
 | `src/textwrap.ts` | `wrapText(text, font, maxWidth)` — canvas-based text measurement and greedy line wrapping. Falls back to a `text.length * 7` estimate if canvas isn't available (jsdom in tests; real browsers always take the accurate path). |
-| `src/render.ts` | Builds the actual SVG from a layout: draws boxes (root white/bordered, others pastel-filled per branch color via `lighten()`), wrapped multi-line text (prefixed with `node.icon` if set), bezier or right-angle edges (`EdgeStyle`), the hover-reveal "+" add-button, an always-visible collapse/expand toggle on nodes with children, notes/link badges, a drop-target highlight during reparent-by-drag, and the inline `<input>`/`<textarea>` overlays for title/notes/icon/link editing. Exposes `computeFitCamera` (shared by initial-camera and the toolbar's zoom-to-fit) and `RenderResult.contentBBox`. Wraps each node's text *once* per render and reuses those wrapped lines for both sizing (via layout's `getSize`) and drawing, so they can't drift out of sync. |
-| `src/app.ts` | Owns all mutable UI state (selection, editing, camera, drag, edge style, undo history, open file path, drop target) for **one** document and every event listener (pointer, wheel, keydown, resize). This is the orchestration layer — `render()` re-runs the whole render.ts pipeline on every state change. `AppHandle.setActive()`/`getTitle()` exist for `workspace.ts` to coordinate multiple concurrently-mounted instances (see below) — an inactive instance's `window`-level key/resize listeners no-op, since `window` listeners are global and every open document's instance receives every keystroke regardless of which is visible. |
-| `src/toolbar.ts` | The floating toolbar (open/save, undo/redo, branch color swatches, edge-style toggle, tidy-up, zoom-to-fit). Plain DOM, callback-driven — no state of its own beyond what `update()` is told. |
-| `src/tabs.ts` | The tab strip above the toolbar for multiple maps: switch/close/new. Same callback-driven pattern as `toolbar.ts`. |
+| `src/render.ts` | Builds the actual SVG from a layout: draws boxes (root white/bordered, others pastel-filled per branch color via `lighten()`), wrapped multi-line text (prefixed with `node.icon` if set), an optional `node.image` thumbnail stacked above the text, bezier or right-angle edges (`EdgeStyle`), the hover-reveal "+" add-button, an always-visible collapse/expand toggle on nodes with children, notes/link/checklist-status badges, a drop-target highlight during reparent-by-drag, and the inline `<input>`/`<textarea>` overlays for title/notes/icon/link editing. Exposes `computeFitCamera` (shared by initial-camera and the toolbar's zoom-to-fit) and `RenderResult.contentBBox`. Wraps each node's text *once* per render and reuses those wrapped lines for both sizing (via layout's `getSize`) and drawing, so they can't drift out of sync; `buildVisuals()` is the single place a node's box size is computed, and folds in the image thumbnail's fixed size when `node.image` is set, so `layout.ts` never needs to know about images. `RenderState.selectedIds` is a set (not a single id) so multiple nodes can be highlighted at once; `RenderState.sketchy` swaps every box/edge to a hand-drawn `roughjs` render (deterministic per-shape `seed` derived from the node/edge id, so re-renders don't jitter); `RenderState.focusId` dims (`.mm-dimmed`, opacity only) every node/edge outside the focused node's ancestor-and-descendant set, computed fresh per render by `computeFocusSet()`. Text measurement reads the current font from `fonts.ts`'s `getFontFamily()` rather than a hardcoded constant. |
+| `src/fonts.ts` | `FONT_OPTIONS` (System/Serif/Monospace/Hand-drawn font stacks — system fonts only, no bundled files, so the app stays offline-capable) plus `getFontId`/`setFontId`/`getFontFamily`/`initFontFamily`. A global preference (like `theme.ts`), applied as the `--mm-font-family` CSS variable on `<html>` and read directly by `render.ts`/`exportImage.ts` for text measurement, so wrapping always matches what's painted. |
+| `src/search.ts` | `createSearchBar` — a floating find bar (⌘F) shown/hidden via `hidden` rather than mounted per-render, so it survives `renderMindMap()`'s canvas rebuild. Search matches walk only currently-visible nodes (mirrors `render.ts`'s collapsed-skipping traversal); jumping to a match centers the camera on it via `app.ts`'s `centerCameraOn()`. |
+| `src/minimap.ts` | `createMinimap` — a small floating SVG overview (bottom-right, toggleable from the toolbar) reusing `render.ts`'s `computeFitCamera` to fit the tree into a fixed small viewport, drawing each node as a small colored rect plus a stroked outline for the main canvas's visible world-rect; click/drag inside it re-centers the main camera. Skips rendering for a blank (root-only) map. Not yet interactively verified in a real browser. |
+| `src/app.ts` | Owns all mutable UI state (multi-selection, editing, camera, drag, edge style, sketchy/focus-mode toggles, search, undo history, open file path, drop target) for **one** document and every event listener (pointer, wheel, keydown, resize, paste). This is the orchestration layer — `render()` re-runs the whole render.ts pipeline on every state change. Multi-select (shift+click) tracks a `Set<string>` alongside a single "primary" `selectedId` that single-target actions (edit, notes/icon/link, arrow-nav) still act on; a shift+click on an already-selected node defers the deselect-vs-drag decision to pointerup (`pendingDeselectId`) so dragging a member of the current selection moves the whole group instead of collapsing it first. `AppHandle.setActive()`/`getTitle()` exist for `workspace.ts` to coordinate multiple concurrently-mounted instances (see below) — an inactive instance's `window`-level key/resize listeners no-op, since `window` listeners are global and every open document's instance receives every keystroke regardless of which is visible. |
+| `src/toolbar.ts` | The floating toolbar: open/save/export/import-Markdown/print/recent-files, undo/redo, branch color swatches (7 presets plus a native-color-picker custom swatch), edge-style toggle, sketchy-style toggle, tidy-up, zoom controls, focus-mode toggle, minimap toggle. Plain DOM, callback-driven — no state of its own beyond what `update()` is told. |
+| `src/tabs.ts` | The tab strip above the toolbar for multiple maps: switch/close/new (via a template-choice popover, see `templates.ts`), a font picker, and the dark-mode toggle. Same callback-driven pattern as `toolbar.ts`. |
+| `src/templates.ts` | `TEMPLATES` — a few small starter trees (Blank, Project Plan, Retro, Weekly To-do) offered by the tab strip's "+" button. |
+| `src/recentFiles.ts` | `getRecentFiles`/`addRecentFile`/`removeRecentFile` — an MRU, de-duplicated, localStorage-backed list (capped at 8) of successfully opened/saved/imported paths, shown in the toolbar's Recent popover; a path that fails to reopen (e.g. moved/deleted) prunes itself from the list. |
+| `src/importMarkdown.ts` | `fromMarkdown(text)` — the inverse of `exportMarkdown.ts`'s `toMarkdown`: parses an `# H1` root, indented bullets as nested children, a leading emoji as `icon`, `[label](url)` as `link`, and an indented `*italic*` line as `notes`. Tolerant of hand-written outlines (`-`/`*`/`+` bullets), not just its own export format. |
+| `src/printMap.ts` | `printMap(svgEl, contentBBox)` — builds the standalone SVG via `exportImage.ts`'s `exportSvgString`, embeds it in a hidden iframe, and calls the iframe's own `contentWindow.print()` so only the map (not the app chrome) goes to the print dialog. |
 | `src/workspace.ts` | Multiple maps = multiple fully independent `startApp` instances, each in its own full-size sibling container inside `#app`; only the active one is shown (others `display:none`) and active (`setActive`). Closing the last tab replaces it with a fresh blank map rather than leaving zero. |
 | `src/links.ts` | Thin wrapper around `@tauri-apps/plugin-opener`'s `openUrl` for opening a node's `link` in the default browser; swallows errors (no-ops outside a real Tauri webview, e.g. in tests or the Chrome-driven dev server). |
 | `src/history.ts` | Generic linear undo/redo stack (`createHistory`) operating on whole-document snapshots (`structuredClone`), not diffs. Simple, and plenty fast for a document this small. |
-| `src/persistence.ts` | Save/load to a local `.canopy` (JSON) file via `@tauri-apps/plugin-dialog` + `@tauri-apps/plugin-fs`. |
+| `src/persistence.ts` | Save/load to a local `.canopy` (JSON) file via `@tauri-apps/plugin-dialog` + `@tauri-apps/plugin-fs`. `parseNode()` whitelists exactly which fields survive loading (including `status`/`image`) — an unlisted field on a new `MindMapNode` property silently vanishes on reload unless added here too. |
 | `src/exportFile.ts` | One toolbar action exporting the current map to PNG, SVG, or Markdown — the save dialog's chosen filename extension picks the format. |
-| `src/exportImage.ts` | `exportSvgString`/`exportPngDataUrl` — serializes the live SVG into a standalone image. Since the live canvas relies on an external stylesheet (and inherits its font from `<body>`) for visuals a cloned/detached SVG wouldn't have, it inlines the actual current `.mm-*` CSS rules (read live from `document.styleSheets`, not hand-duplicated) plus `render.ts`'s `FONT_FAMILY` into an embedded `<style>`. |
-| `src/exportMarkdown.ts` | `toMarkdown(root)` — a pure function rendering the tree as a Markdown outline (root as H1, nested bullets, icon-prefixed/link-wrapped/notes-as-italic-subline per node). |
+| `src/exportImage.ts` | `exportSvgString`/`exportPngDataUrl` — serializes the live SVG into a standalone image. Since the live canvas relies on an external stylesheet (and inherits its font from `<body>`) for visuals a cloned/detached SVG wouldn't have, it inlines the actual current `.mm-*` CSS rules (read live from `document.styleSheets`, not hand-duplicated) plus `fonts.ts`'s `getFontFamily()` into an embedded `<style>`. |
+| `src/exportMarkdown.ts` | `toMarkdown(root)` — a pure function rendering the tree as a Markdown outline (root as H1, nested bullets, icon-prefixed/link-wrapped/notes-as-italic-subline per node, checklist status as `[ ]`/`[x]`). |
 | `src/theme.ts` | `getTheme`/`setTheme`/`initTheme` — dark mode, persisted via `localStorage`, applied as `data-theme` on `<html>` (drives `styles.css`'s `:root[data-theme="dark"]` overrides). |
 
 ### Key design decisions (the "why", so it doesn't get re-litigated)
@@ -54,11 +61,16 @@ nodes with word-wrapped text.
 
 1. **Never measure an SVG element before it's attached to the document.** `text.getBBox()` on a detached element silently returns a zero-size box in real browsers (Chrome/WebKit) — no exception. jsdom, by contrast, throws "not implemented" for *every* `getBBox()` call regardless of attachment state, which is *worse* for catching this class of bug: it meant early tests all "passed" by accident (always hitting the safe fallback) while the real app's leaf-node hit-rects were all broken identically. This is why node sizing was redesigned to not depend on DOM measurement at all — see `src/textwrap.ts` (canvas-based) — `render.ts` only calls `getBBox()` on the top-level content group now, for camera-fit purposes.
 2. **OS-level screen automation (`cliclick`, AppleScript `System Events`) is unreliable for verifying this app.** Window focus drifts back to the controlling terminal between separate tool calls (not within one), and window resizes happen unpredictably mid-test-sequence, silently invalidating previously-queried coordinates. **Prefer driving a Chrome tab pointed at `http://localhost:1420`** (same frontend code, since it's plain web content) via `mcp__claude-in-chrome__*` tools — real CDP-driven clicks, reliable coordinate space, and console/DOM access. The one thing that *can't* be tested this way is anything touching actual Tauri APIs (dialogs, fs) — those only exist inside the real Tauri webview.
+3. **A floating panel toggled via the `hidden` DOM attribute needs an explicit `.mm-x[hidden] { display: none; }` rule if the panel's own class also sets `display`.** The browser's UA stylesheet rule for `[hidden]` and a same-specificity class rule for `display` tie on specificity, and the later-loaded page stylesheet wins the tie — so `hidden = true` silently does nothing and the panel stays visible. Hit twice independently (`.mm-search` and `.mm-popover`, both `display: flex`); every hide/show floating panel needs the explicit override.
+4. **Claude-in-Chrome's `computer` tool's `key` action intermittently drops the keypress** (observed with `Return`, `⌘F`, and plain letter shortcuts) — the tool reports success but no listener fires, with no visible error. Re-dispatching the same key as a real `KeyboardEvent` via `javascript_exec` is 100% reliable and is the fallback when a `key` action doesn't seem to have done anything.
 
 ## Status (as of 2026-09-05)
 
-Every item from the original backlog is now implemented and verified —
-nothing is left brainstormed-but-not-built.
+Every item from the original backlog is implemented, plus a second round of
+features brainstormed after that backlog was cleared (fonts/sketchy style,
+multi-select, search, focus mode, checklist status, image paste, a minimap,
+Markdown import, recent files, templates, print). Nothing is left
+brainstormed-but-not-built as of this writing.
 
 **Working and verified** (real interaction testing, not just unit tests):
 select, inline edit (double-click or hover "+" button), add child (Tab/Enter/+button), delete, drag-to-reposition, pan, zoom, branch recoloring via toolbar, curved/straight edge toggle, word-wrap on long labels, undo/redo of add/delete/drag/color (`⌘Z` / `⌘⇧Z`), tidy-up (clears manual drag offsets, snapping back to the auto-computed layout), a centered floating toolbar with standard folder/floppy-disk open/save icons.
@@ -76,6 +88,65 @@ multiple maps (a tab strip above the toolbar; each tab is a fully
 independent `startApp` instance mounted in its own sibling container — see
 `workspace.ts`) are all implemented and verified, both via jsdom tests and
 live Chrome/real-app interaction.
+
+A font picker (System/Serif/Monospace/Hand-drawn, global preference next to
+the dark-mode toggle — see `fonts.ts`), a hand-drawn/xkcd "sketchy" render
+style (toolbar toggle, `roughjs`-based, works in both themes and with
+selection/drop-target highlighting), and a native-color-picker custom
+branch-color swatch (alongside the 7 presets) are implemented and verified
+in real Chrome interaction.
+
+Multi-select (shift+click to add/remove nodes from a selection, bulk
+recolor, bulk delete as one undo step, shift+drag to move a whole selected
+group together), find/search (`⌘F`, live-filtered, camera-centers on the
+current match, previous/next cycling), and focus mode (`F` or the toolbar
+toggle dims everything outside the selected node's branch, computed fresh
+per render) are implemented and verified in real Chrome interaction.
+
+Per-node checklist status (`T` cycles undefined -> "todo" -> "done" ->
+undefined, drawn as a corner badge — empty circle outline, or a filled
+checkmark, in `render.ts`) is implemented and verified in real Chrome
+interaction. Pasting an image from the clipboard onto the selected node
+(drawn as a fixed-size thumbnail above the node's text, sized into the box
+by `render.ts`'s `buildVisuals()`) is implemented and covered by unit tests
+(`setImage` plus the `buildVisuals()` sizing change), but not yet
+interactively verified — jsdom has no real clipboard to paste an image from.
+
+A minimap (`minimap.ts`, bottom-right, toolbar-toggleable, click/drag to
+navigate) is implemented and verified in real Chrome interaction, including
+a real bug caught only by that verification: the viewport-outline rect
+(showing what the main canvas currently sees) was computed correctly in
+world space but never clamped to the minimap's own small viewBox, so for
+any map whose total content is narrower than what the main window shows
+(most new/small maps, even zoomed in), every edge of that rect landed
+outside the visible area simultaneously and the outline silently never
+rendered — fixed by clamping it to the minimap's bounds before drawing.
+
+Markdown import (`importMarkdown.ts`, the inverse of the existing exporter)
+and an Open Recent popover (`recentFiles.ts`, localStorage-backed MRU list)
+are implemented and verified to at least fail gracefully outside a real
+Tauri shell (their native dialog/fs calls don't exist in a plain browser),
+including a real bug caught only by that verification: import's dialog call
+wasn't wrapped in the same catch-and-leave-the-document-alone pattern
+`performOpen()` uses, so a failure there surfaced as an unhandled promise
+rejection instead of a graceful no-op — fixed to wrap the whole flow, not
+just the file-read half of it. Starter templates (`templates.ts`, offered
+from the tab strip's "+" button) are implemented and verified in real
+Chrome interaction, including a real bug caught only by that verification:
+the template-choice popover is positioned inside `.mm-tabstrip`, which has
+`overflow-x: auto` for horizontal tab scrolling — per the CSS overflow
+spec, that makes the *other* axis clip too, so the popover was rendering
+correctly (un-hidden, right content) but invisible below the tab strip's
+bottom edge. Fixed by anchoring it to `container` (positioned, and not
+clipped) instead, with its position computed from the "+" button's own
+`getBoundingClientRect()` rather than CSS relative-to-parent positioning.
+None of this can be exercised through the actual native open/save dialogs
+outside the real Tauri webview, so full round-tripping still needs a pass
+in the built app. Print support (`printMap.ts`, via a hidden iframe's own
+print dialog) is implemented and type/unit-tested, but calling it opens a
+real native print dialog that blocks the page until dismissed — not
+something browser automation can safely drive, so it hasn't been
+interactively verified beyond static code review.
 
 Export as PNG/SVG/Markdown is one toolbar action (`exportFile.ts`) whose
 save-dialog filename extension picks the format — verified end-to-end in
@@ -125,6 +196,9 @@ error.
 A signed/notarized release isn't set up — `.github/workflows/release.yml`
 builds unsigned installers for macOS/Windows/Linux on a `v*` tag push.
 
-**Not started:** nothing outstanding from the original brainstormed list.
-Future feature ideas should get their own round of brainstorming rather than
-assuming the old list still applies.
+**Not started:** nothing outstanding from either brainstormed list. Image
+paste (no real clipboard in a plain browser) and print (opens a real,
+automation-blocking native dialog) are the two remaining pieces that still
+need a pass in the actual built app before being called fully done — see
+the notes above. Future feature ideas should get their own round of
+brainstorming rather than assuming the old lists still apply.

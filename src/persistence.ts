@@ -60,5 +60,7 @@ function parseNode(value: unknown): MindMapNode {
   if (typeof raw.notes === "string") node.notes = raw.notes;
   if (typeof raw.link === "string") node.link = raw.link;
   if (typeof raw.icon === "string") node.icon = raw.icon;
+  if (raw.status === "todo" || raw.status === "done") node.status = raw.status;
+  if (typeof raw.image === "string") node.image = raw.image;
   return node;
 }

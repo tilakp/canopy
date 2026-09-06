@@ -97,9 +97,13 @@ describe("createWorkspace", () => {
     expect(tabEls()[0].querySelector(".mm-tab-title")!.textContent).toBe("Untitled");
   });
 
-  it("creates a new blank map via the '+' button", () => {
+  it("creates a new map by picking a template from the '+' button's panel", () => {
     createWorkspace(container, createNode("First"), null);
     container.querySelector<HTMLButtonElement>(".mm-tab-new")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const blankItem = [...container.querySelectorAll<HTMLButtonElement>(".mm-popover-item")].find(
+      (b) => b.textContent === "Blank",
+    )!;
+    blankItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(docContainers()).toHaveLength(2);
     expect(tabEls()[1].querySelector(".mm-tab-title")!.textContent).toBe("Untitled");

@@ -29,7 +29,7 @@ describe("exportSvgString", () => {
     const root = createNode("Root");
     addChild(root, "Branch");
     const container = setup();
-    renderMindMap(container, root, { selectedId: null, editingId: null, edgeStyle: "curved" }, noopCallbacks);
+    renderMindMap(container, root, { selectedIds: new Set(), editingId: null, edgeStyle: "curved" }, noopCallbacks);
 
     const svgEl = container.querySelector("svg.mm-canvas") as unknown as SVGSVGElement;
     const result = exportSvgString(svgEl, { x: -50, y: -50, width: 300, height: 200 });
@@ -52,7 +52,7 @@ describe("exportSvgString", () => {
     renderMindMap(
       container,
       root,
-      { selectedId: null, editingId: null, edgeStyle: "curved", camera: { x: 123, y: 45, scale: 1.7 } },
+      { selectedIds: new Set(), editingId: null, edgeStyle: "curved", camera: { x: 123, y: 45, scale: 1.7 } },
       noopCallbacks,
     );
 
@@ -65,7 +65,7 @@ describe("exportSvgString", () => {
   it("sizes the viewBox from the given content bbox plus a margin", () => {
     const root = createNode("Root");
     const container = setup();
-    renderMindMap(container, root, { selectedId: null, editingId: null, edgeStyle: "curved" }, noopCallbacks);
+    renderMindMap(container, root, { selectedIds: new Set(), editingId: null, edgeStyle: "curved" }, noopCallbacks);
 
     const svgEl = container.querySelector("svg.mm-canvas") as unknown as SVGSVGElement;
     const result = exportSvgString(svgEl, { x: 0, y: 0, width: 100, height: 50 });

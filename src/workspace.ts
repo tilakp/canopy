@@ -2,6 +2,7 @@ import { createNode, type MindMapNode } from "./model";
 import { startApp, type AppHandle } from "./app";
 import { createTabStrip } from "./tabs";
 import { getTheme, setTheme } from "./theme";
+import { getFontId, setFontId } from "./fonts";
 
 // Multiple maps are multiple fully independent startApp instances, each
 // mounted in its own full-size container stacked in the same #app element.
@@ -26,12 +27,20 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
   const tabStrip = createTabStrip(appEl, {
     onSwitch: (id) => switchTo(id),
     onClose: (id) => closeDoc(id),
-    onNew: () => addDoc(createNode("Untitled"), null, true),
+    onNew: (root) => addDoc(root, null, true),
     onToggleTheme: () => {
       setTheme(getTheme() === "dark" ? "light" : "dark");
       // Most theming is live via CSS custom properties, but a leaf node's
       // pastel fill is baked into an inline SVG attribute per render — force
       // every open document to re-render so none of them show a stale shade.
+      for (const d of docs) d.handle.forceRender();
+      refreshTabs();
+    },
+    onPickFont: (fontId) => {
+      setFontId(fontId);
+      // Text wrapping/box sizing is measured from the current font, baked
+      // into the layout per render — force every open document to
+      // re-render so none of them keep stale wrap widths from the old font.
       for (const d of docs) d.handle.forceRender();
       refreshTabs();
     },
@@ -42,6 +51,7 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
       docs.map((d) => ({ id: d.id, title: d.handle.getTitle() })),
       activeId,
       getTheme() === "dark",
+      getFontId(),
     );
   }
 

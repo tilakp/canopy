@@ -15,6 +15,8 @@ describe("parseDocument", () => {
       notes: "note",
       link: "https://example.com",
       icon: "🚀",
+      status: "done",
+      image: "data:image/png;base64,abc123",
       offset: { dx: 5, dy: -5 },
       children: [{ id: "a", text: "A", children: [] }],
     };
@@ -35,9 +37,13 @@ describe("parseDocument", () => {
 
   it("drops wrong-typed optional fields instead of letting them reach layout", () => {
     // A non-numeric offset would turn every coordinate downstream into NaN.
-    const parsed = parseDocument(`{"id":"x","text":"T","offset":"nope","icon":7,"children":[]}`);
+    const parsed = parseDocument(
+      `{"id":"x","text":"T","offset":"nope","icon":7,"status":"maybe","image":7,"children":[]}`,
+    );
 
     expect(parsed.offset).toBeUndefined();
     expect(parsed.icon).toBeUndefined();
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.image).toBeUndefined();
   });
 });

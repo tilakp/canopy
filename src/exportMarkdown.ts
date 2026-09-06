@@ -4,7 +4,8 @@ import type { MindMapNode } from "./model";
 // child subtree becomes a nested bullet list (2-space indent per depth).
 // A node's icon prefixes its bullet text; a link wraps the bullet as a
 // Markdown link; notes render as an italic line one level deeper than the
-// bullet they belong to.
+// bullet they belong to; a checklist status prefixes the bullet with
+// standard `[ ] `/`[x] ` task-list syntax.
 export function toMarkdown(root: MindMapNode): string {
   const lines: string[] = [`# ${root.text}`, ""];
   for (const child of root.children) {
@@ -17,8 +18,9 @@ function renderNode(node: MindMapNode, depth: number): string[] {
   const indent = "  ".repeat(depth - 1);
   const label = (node.icon ? `${node.icon} ` : "") + node.text;
   const bulletText = node.link ? `[${label}](${node.link})` : label;
+  const checklistPrefix = node.status ? (node.status === "done" ? "[x] " : "[ ] ") : "";
 
-  const lines = [`${indent}- ${bulletText}`];
+  const lines = [`${indent}- ${checklistPrefix}${bulletText}`];
   if (node.notes) {
     lines.push(`${indent}  *${node.notes}*`);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addChild, createNode, moveSibling, reparentNode } from "./model";
+import { addChild, createNode, cycleStatus, moveSibling, reparentNode, setImage } from "./model";
 
 describe("moveSibling", () => {
   it("swaps a node with the next sibling", () => {
@@ -67,5 +67,37 @@ describe("reparentNode", () => {
     expect(reparentNode(root, branch.id, grandchild.id)).toBe(false);
     expect(root.children).toEqual([branch]);
     expect(branch.children).toEqual([grandchild]);
+  });
+});
+
+describe("cycleStatus", () => {
+  it("cycles undefined -> todo -> done -> undefined", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+
+    cycleStatus(root, a.id);
+    expect(a.status).toBe("todo");
+    cycleStatus(root, a.id);
+    expect(a.status).toBe("done");
+    cycleStatus(root, a.id);
+    expect(a.status).toBeUndefined();
+  });
+
+  it("is a no-op for an unknown id", () => {
+    const root = createNode("Root");
+    expect(() => cycleStatus(root, "missing")).not.toThrow();
+  });
+});
+
+describe("setImage", () => {
+  it("sets and clears a node's image", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+
+    setImage(root, a.id, "data:image/png;base64,abc");
+    expect(a.image).toBe("data:image/png;base64,abc");
+
+    setImage(root, a.id, undefined);
+    expect(a.image).toBeUndefined();
   });
 });

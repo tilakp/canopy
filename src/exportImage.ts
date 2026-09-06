@@ -1,4 +1,4 @@
-import { FONT_FAMILY } from "./render";
+import { getFontFamily } from "./fonts";
 
 // Exports the live rendered mind map SVG as a standalone image (SVG string
 // or rasterized PNG data URL). "Standalone" matters: the live SVG relies on
@@ -60,7 +60,7 @@ export function exportSvgString(svgEl: SVGSVGElement, contentBBox: ContentBBox):
   contentGroup?.removeAttribute("transform");
 
   const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-  style.textContent = `svg { font-family: ${FONT_FAMILY}; }\n${collectCanvasCss()}`;
+  style.textContent = `svg { font-family: ${getFontFamily()}; }\n${collectCanvasCss()}`;
   clone.insertBefore(style, clone.firstChild);
 
   const serialized = new XMLSerializer().serializeToString(clone);

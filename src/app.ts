@@ -1,6 +1,7 @@
 import {
   addChild,
   clearOffsets,
+  cycleStatus,
   findNode,
   findParent,
   moveSibling,
@@ -8,6 +9,7 @@ import {
   reparentNode,
   setColor,
   setIcon,
+  setImage,
   setLink,
   setNotes,
   toggleCollapsed,
@@ -15,11 +17,19 @@ import {
   type MindMapNode,
 } from "./model";
 import { renderMindMap, computeFitCamera, applyCamera, type Camera, type EdgeStyle } from "./render";
+import type { NodeLayout } from "./layout";
 import { createToolbar } from "./toolbar";
+import { createMinimap } from "./minimap";
 import { createHistory } from "./history";
-import { saveToFile, loadFromFile } from "./persistence";
+import { saveToFile, loadFromFile, loadFromPath } from "./persistence";
 import { openLink } from "./links";
 import { exportMap } from "./exportFile";
+import { createSearchBar } from "./search";
+import { fromMarkdown } from "./importMarkdown";
+import { printMap } from "./printMap";
+import { addRecentFile } from "./recentFiles";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
@@ -29,7 +39,16 @@ const DOUBLE_CLICK_MS = 600;
 const DOUBLE_CLICK_PX = 12;
 
 type DragState =
-  | { type: "node"; id: string; startX: number; startY: number; startOffset: { dx: number; dy: number } }
+  | {
+      type: "node";
+      id: string;
+      startX: number;
+      startY: number;
+      // Every dragged node's starting offset, keyed by id — usually just the
+      // one node under the pointer, but a shift+drag on a member of the
+      // current multi-selection moves every selected node together.
+      startOffsets: Map<string, { dx: number; dy: number }>;
+    }
   | { type: "pan"; startX: number; startY: number; startCamera: Camera }
   | null;
 
@@ -63,18 +82,43 @@ export function startApp(
   let root = initialRoot;
   let isActive = true;
   let selectedId: string | null = null;
+  // The full multi-selection (shift+click to add/remove members); selectedId
+  // is the "primary" member that single-target actions (edit, notes/icon/
+  // link, arrow-key navigation, add-child) act on. selectOnly() keeps both
+  // in sync for the common single-selection case.
+  let selectedIds: Set<string> = new Set();
+  function selectOnly(id: string | null): void {
+    selectedId = id;
+    selectedIds = id ? new Set([id]) : new Set();
+  }
   let editingId: string | null = null;
   let notesEditingId: string | null = null;
   let iconEditingId: string | null = null;
   let linkEditingId: string | null = null;
   let edgeStyle: EdgeStyle = "curved";
+  let sketchy = false;
+  let focusId: string | null = null;
+  function toggleFocus(): void {
+    if (!selectedId || selectedId === root.id) return;
+    focusId = focusId === selectedId ? null : selectedId;
+    render();
+  }
   let camera: Camera | undefined;
   let dragState: DragState = null;
   let dragMoved = false;
+  // Set at pointerdown when shift-clicking a node that's already part of a
+  // multi-selection — resolved at pointerup: a plain click (no drag) then
+  // toggles it off, but a drag moves the whole group without deselecting it.
+  let pendingDeselectId: string | null = null;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
   let filePath: string | null = initialFilePath;
   let lastContentBBox = new DOMRect();
+  let lastPositions = new Map<string, NodeLayout>();
   let dropTargetId: string | null = null;
+  let minimapVisible = true;
+  let searchQuery = "";
+  let searchMatchIds: string[] = [];
+  let searchIndex = 0;
 
   const history = createHistory(structuredClone(root));
   function commit(): void {
@@ -96,8 +140,9 @@ export function startApp(
 
   const toolbar = createToolbar(container, {
     onPickColor(color) {
-      if (!selectedId || selectedId === root.id) return;
-      setColor(root, selectedId, color);
+      const targets = [...selectedIds].filter((id) => id !== root.id);
+      if (targets.length === 0) return;
+      for (const id of targets) setColor(root, id, color);
       commit();
       render();
     },
@@ -105,6 +150,11 @@ export function startApp(
       edgeStyle = style;
       render();
     },
+    onToggleSketchy() {
+      sketchy = !sketchy;
+      render();
+    },
+    onToggleFocus: () => toggleFocus(),
     onUndo: () => void performUndo(),
     onRedo: () => void performRedo(),
     onSave: () => void performSave(),
@@ -118,13 +168,114 @@ export function startApp(
     onZoomIn: () => performZoomBy(ZOOM_STEP),
     onZoomOut: () => performZoomBy(1 / ZOOM_STEP),
     onExport: () => void performExport(),
+    onToggleMinimap: () => {
+      minimapVisible = !minimapVisible;
+      render();
+    },
+    onImportMarkdown: () => void performImportMarkdown(),
+    onPrint: () => void performPrint(),
+    onOpenRecent: (path) => performOpenRecent(path),
   });
 
+  const minimap = createMinimap(container, {
+    // Re-centers the main camera on the world point the user clicked inside
+    // the minimap.
+    onNavigate(worldX, worldY) {
+      if (!camera) return;
+      const rect = container.getBoundingClientRect();
+      camera = {
+        ...camera,
+        x: rect.width / 2 - worldX * camera.scale,
+        y: rect.height / 2 - worldY * camera.scale,
+      };
+      render();
+    },
+  });
+
+  const searchBar = createSearchBar(container, {
+    onQueryChange(query) {
+      searchQuery = query;
+      updateSearchMatches();
+      if (searchMatchIds.length > 0) jumpToSearchMatch();
+      else render();
+    },
+    onNext() {
+      if (searchMatchIds.length === 0) return;
+      searchIndex = (searchIndex + 1) % searchMatchIds.length;
+      jumpToSearchMatch();
+    },
+    onPrev() {
+      if (searchMatchIds.length === 0) return;
+      searchIndex = (searchIndex - 1 + searchMatchIds.length) % searchMatchIds.length;
+      jumpToSearchMatch();
+    },
+    onClose() {
+      searchBar.close();
+      searchQuery = "";
+      searchMatchIds = [];
+      container.focus();
+      render();
+    },
+  });
+
+  // Mirrors render.ts's own iterateNodes: a collapsed node's descendants
+  // have no layout position, so matches inside one couldn't be centered on
+  // anyway — search is scoped to what's currently visible.
+  function* visibleNodes(node: MindMapNode): Generator<MindMapNode> {
+    yield node;
+    if (node.collapsed) return;
+    for (const child of node.children) yield* visibleNodes(child);
+  }
+
+  function updateSearchMatches(): void {
+    const query = searchQuery.trim().toLowerCase();
+    searchMatchIds = query
+      ? [...visibleNodes(root)].filter((n) => n.text.toLowerCase().includes(query)).map((n) => n.id)
+      : [];
+    searchIndex = 0;
+  }
+
+  function centerCameraOn(id: string): void {
+    const layout = lastPositions.get(id);
+    if (!layout || !camera) return;
+    const rect = container.getBoundingClientRect();
+    camera = {
+      ...camera,
+      x: rect.width / 2 - (layout.x + layout.width / 2) * camera.scale,
+      y: rect.height / 2 - layout.y * camera.scale,
+    };
+  }
+
+  function jumpToSearchMatch(): void {
+    const id = searchMatchIds[searchIndex];
+    if (!id) {
+      render();
+      return;
+    }
+    selectOnly(id);
+    centerCameraOn(id);
+    render();
+  }
+
   function render(): void {
+    // A focused node removed by an edit/undo would otherwise leave every
+    // remaining node dimmed (computeFocusSet finds nothing to keep lit).
+    if (focusId && !findNode(root, focusId)) focusId = null;
     const result = renderMindMap(
       canvasEl,
       root,
-      { selectedId, editingId, notesEditingId, iconEditingId, linkEditingId, edgeStyle, camera, dropTargetId },
+      {
+        selectedIds,
+        editingId,
+        notesEditingId,
+        iconEditingId,
+        linkEditingId,
+        edgeStyle,
+        sketchy,
+        focusId,
+        camera,
+        dropTargetId,
+      },
       {
         onEditCommit(id, text) {
           updateText(root, id, text.trim() || "Untitled");
@@ -178,20 +329,37 @@ export function startApp(
     );
     camera = result.camera;
     lastContentBBox = result.contentBBox;
+    lastPositions = result.positions;
+    minimap.update({
+      positions: lastPositions,
+      contentBBox: lastContentBBox,
+      camera,
+      viewportSize: container.getBoundingClientRect(),
+      visible: minimapVisible,
+    });
 
-    const hasSelection = selectedId !== null && selectedId !== root.id;
+    const targets = [...selectedIds].filter((id) => id !== root.id);
+    const targetColors = targets.map((id) => result.positions.get(id)?.color ?? null);
+    // Only show a swatch as "active" when every selected node shares that
+    // color — a mixed multi-selection shows no active swatch, same idea as
+    // a word processor's bold button going blank over a mixed-weight range.
+    const activeColor = targetColors.length > 0 && targetColors.every((c) => c === targetColors[0]) ? targetColors[0] : null;
     toolbar.update({
-      hasSelection,
-      activeColor: hasSelection ? (result.positions.get(selectedId!)?.color ?? null) : null,
+      hasSelection: targets.length > 0,
+      activeColor,
       edgeStyle,
+      sketchy,
+      focused: focusId !== null,
+      minimapVisible,
       canUndo: history.canUndo(),
       canRedo: history.canRedo(),
     });
+    searchBar.update({ query: searchQuery, matchCount: searchMatchIds.length, currentIndex: searchIndex });
     onChange?.();
   }
 
   function startEditing(id: string): void {
-    selectedId = id;
+    selectOnly(id);
     editingId = id;
     render();
   }
@@ -199,8 +367,9 @@ export function startApp(
   function loadRoot(newRoot: MindMapNode, path: string | null): void {
     root = newRoot;
     filePath = path;
-    selectedId = null;
+    selectOnly(null);
     editingId = null;
+    focusId = null;
     camera = undefined;
     dragState = null;
     history.push(structuredClone(root));
@@ -209,20 +378,56 @@ export function startApp(
 
   async function performSave(): Promise<void> {
     const savedPath = await saveToFile(root, filePath);
-    if (savedPath) filePath = savedPath;
+    if (savedPath) {
+      filePath = savedPath;
+      addRecentFile(savedPath);
+    }
   }
 
   async function performOpen(): Promise<void> {
     // A file that can't be read, or whose JSON isn't a mind map, must leave
     // the current document alone rather than half-replacing it.
     const result = await loadFromFile().catch(() => null);
-    if (result) loadRoot(result.root, result.path);
+    if (result) {
+      loadRoot(result.root, result.path);
+      addRecentFile(result.path);
+    }
+  }
+
+  async function performImportMarkdown(): Promise<void> {
+    // The whole flow (including the dialog itself) is wrapped, not just the
+    // file read — same shape as performOpen(): a failure at any step must
+    // leave the current document alone rather than half-replacing it, and
+    // must not surface as an unhandled rejection.
+    const path = await open({ multiple: false, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(
+      () => null,
+    );
+    if (!path || Array.isArray(path)) return;
+    const importedRoot = await readTextFile(path).then(fromMarkdown).catch(() => null);
+    if (importedRoot) {
+      loadRoot(importedRoot, null);
+      addRecentFile(path);
+    }
+  }
+
+  async function performOpenRecent(path: string): Promise<boolean> {
+    const result = await loadFromPath(path).catch(() => null);
+    if (!result) return false;
+    loadRoot(result.root, result.path);
+    addRecentFile(result.path);
+    return true;
   }
 
   async function performExport(): Promise<void> {
     const svgEl = canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
     if (!svgEl) return;
     await exportMap(root, svgEl, lastContentBBox);
+  }
+
+  async function performPrint(): Promise<void> {
+    const svgEl = canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
+    if (!svgEl) return;
+    await printMap(svgEl, lastContentBBox);
   }
 
   // The element under the cursor during a node drag, if it's a valid
@@ -262,7 +467,7 @@ export function startApp(
     const snapshot = history.undo();
     if (!snapshot) return;
     root = structuredClone(snapshot);
-    selectedId = null;
+    selectOnly(null);
     editingId = null;
     render();
   }
@@ -271,7 +476,7 @@ export function startApp(
     const snapshot = history.redo();
     if (!snapshot) return;
     root = structuredClone(snapshot);
-    selectedId = null;
+    selectOnly(null);
     editingId = null;
     render();
   }
@@ -290,6 +495,9 @@ export function startApp(
     // (which would suppress the click event they rely on) or treat this as
     // a canvas pan.
     if ((e.target as Element).closest(".mm-toolbar")) return;
+    // Same reasoning: the minimap handles its own pointer events (click/drag
+    // to navigate) and shouldn't also fall through to canvas pan/selection.
+    if ((e.target as Element).closest(".mm-minimap")) return;
     // Suppress the browser's default mousedown focus handling: without
     // this, when startEditing() below focuses a freshly-created <input>,
     // the browser's own default action (targeting the original, now
@@ -342,21 +550,38 @@ export function startApp(
         return;
       }
 
-      selectedId = id;
+      // Shift+click toggles multi-selection membership; a shift+drag on a
+      // node already in that selection moves every selected node together.
+      // A plain click always replaces the selection with just this node —
+      // same as before multi-select existed.
+      if (e.shiftKey && id !== root.id) {
+        if (selectedIds.has(id)) {
+          // Don't toggle off yet — deferred to pointerup so that dragging
+          // this node (see groupDrag below) moves the whole group instead
+          // of first shrinking it down to nothing.
+          pendingDeselectId = id;
+        } else {
+          selectedIds.add(id);
+        }
+        selectedId = id;
+      } else {
+        selectOnly(id);
+      }
+
       if (id !== root.id) {
-        const node = findNode(root, id)!;
-        dragState = {
-          type: "node",
-          id,
-          startX: e.clientX,
-          startY: e.clientY,
-          startOffset: { ...(node.offset ?? { dx: 0, dy: 0 }) },
-        };
+        const groupDrag = selectedIds.has(id) && selectedIds.size > 1;
+        const idsToMove = groupDrag ? selectedIds : new Set([id]);
+        const startOffsets = new Map<string, { dx: number; dy: number }>();
+        for (const nid of idsToMove) {
+          const n = findNode(root, nid);
+          if (n) startOffsets.set(nid, { ...(n.offset ?? { dx: 0, dy: 0 }) });
+        }
+        dragState = { type: "node", id, startX: e.clientX, startY: e.clientY, startOffsets };
       }
       render();
     } else {
       lastClick = null;
-      selectedId = null;
+      selectOnly(null);
       dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
       render();
     }
@@ -375,12 +600,21 @@ export function startApp(
     if (dragState.type === "node") {
       if (dxPx === 0 && dyPx === 0) return;
       dragMoved = true;
-      const node = findNode(root, dragState.id)!;
-      node.offset = {
-        dx: dragState.startOffset.dx + dxPx / camera!.scale,
-        dy: dragState.startOffset.dy + dyPx / camera!.scale,
-      };
-      dropTargetId = findDropTargetId(e.clientX, e.clientY, dragState.id);
+      for (const [nid, startOffset] of dragState.startOffsets) {
+        const n = findNode(root, nid);
+        if (n) {
+          n.offset = {
+            dx: startOffset.dx + dxPx / camera!.scale,
+            dy: startOffset.dy + dyPx / camera!.scale,
+          };
+        }
+      }
+      // Reparent-by-drop only applies to a single dragged node — dropping a
+      // multi-node group onto one target would have to reparent every
+      // selected node onto it at once, which risks ambiguous nesting and
+      // cycles (e.g. a selected node being an ancestor of the target), so
+      // group drags just reposition instead.
+      dropTargetId = dragState.startOffsets.size === 1 ? findDropTargetId(e.clientX, e.clientY, dragState.id) : null;
       render();
     } else {
       camera = { ...dragState.startCamera, x: dragState.startCamera.x + dxPx, y: dragState.startCamera.y + dyPx };
@@ -402,16 +636,50 @@ export function startApp(
     if (dragState.type === "node" && dragMoved) {
       if (dropTargetId) reparentNode(root, dragState.id, dropTargetId);
       commit();
+    } else if (dragState.type === "node" && pendingDeselectId) {
+      // A plain (non-dragging) shift+click on an already-selected node —
+      // now it's safe to toggle it off without breaking a group drag.
+      selectedIds.delete(pendingDeselectId);
+      if (selectedId === pendingDeselectId) selectedId = [...selectedIds][0] ?? null;
     }
+    pendingDeselectId = null;
     dragState = null;
     dragMoved = false;
     dropTargetId = null;
     render();
   });
   container.addEventListener("pointercancel", () => {
+    pendingDeselectId = null;
     dragState = null;
     dragMoved = false;
     dropTargetId = null;
+  });
+
+  // Pastes an image from the clipboard onto the selected node. Container-
+  // scoped like the pointer listeners above (not window), since paste
+  // targets whichever element currently has focus, and container.focus()
+  // is what this instance holds when active and not mid-edit.
+  container.addEventListener("paste", (e) => {
+    if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+    if (!selectedId) return;
+    const targetId = selectedId;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setImage(root, targetId, reader.result);
+          commit();
+          render();
+        }
+      };
+      reader.readAsDataURL(file);
+      break;
+    }
   });
 
   // Multiplier applied to both wheel-driven and native pinch-gesture zoom
@@ -586,6 +854,11 @@ export function startApp(
       void performOpen();
       return;
     }
+    if (cmd && e.key.toLowerCase() === "f" && !isEditingAnything) {
+      e.preventDefault();
+      searchBar.open();
+      return;
+    }
     if (cmd && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
       performZoomBy(ZOOM_STEP);
@@ -606,9 +879,18 @@ export function startApp(
       else if (e.key === "i") iconEditingId = selectedId;
       else linkEditingId = selectedId;
       render();
+    } else if (e.key === "t") {
+      if (!selectedId) return;
+      e.preventDefault();
+      cycleStatus(root, selectedId);
+      commit();
+      render();
     } else if (e.key === "0") {
       e.preventDefault();
       performZoomToFit();
+    } else if (e.key === "f") {
+      e.preventDefault();
+      toggleFocus();
     } else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       if (!selectedId) return;
@@ -619,7 +901,7 @@ export function startApp(
     } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();
       if (!selectedId) {
-        selectedId = root.id;
+        selectOnly(root.id);
         render();
         return;
       }
@@ -628,21 +910,21 @@ export function startApp(
       const siblings = parent.children;
       const index = siblings.findIndex((n) => n.id === selectedId);
       const nextIndex = clamp(index + (e.key === "ArrowDown" ? 1 : -1), 0, siblings.length - 1);
-      selectedId = siblings[nextIndex].id;
+      selectOnly(siblings[nextIndex].id);
       render();
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
       if (!selectedId) return;
       const parent = findParent(root, selectedId);
       if (parent) {
-        selectedId = parent.id;
+        selectOnly(parent.id);
         render();
       }
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       const node = selectedId ? findNode(root, selectedId) : root;
       if (node && node.children.length > 0) {
-        selectedId = node.children[0].id;
+        selectOnly(node.children[0].id);
         render();
       }
     } else if (e.key === "Tab") {
@@ -658,12 +940,21 @@ export function startApp(
       commit();
       startEditing(child.id);
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      if (!selectedId || selectedId === root.id) return;
+      const targets = [...selectedIds].filter((id) => id !== root.id);
+      if (targets.length === 0) return;
       e.preventDefault();
-      const parent = findParent(root, selectedId);
-      removeNode(root, selectedId);
-      commit();
-      selectedId = parent ? parent.id : null;
+      if (targets.length === 1) {
+        const parent = findParent(root, targets[0]);
+        removeNode(root, targets[0]);
+        commit();
+        selectOnly(parent ? parent.id : null);
+      } else {
+        // Deleting an ancestor also removes its selected descendants, so a
+        // later removeNode() call for one of those is a safe no-op.
+        for (const id of targets) removeNode(root, id);
+        commit();
+        selectOnly(null);
+      }
       render();
     }
   };

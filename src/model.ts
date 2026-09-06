@@ -17,6 +17,12 @@ export interface MindMapNode {
   link?: string;
   // A single emoji/short glyph shown alongside the node's text.
   icon?: string;
+  // Optional checklist state. Undefined means "not a checklist item" (most
+  // nodes). Cycles undefined -> "todo" -> "done" -> undefined via
+  // cycleStatus().
+  status?: "todo" | "done";
+  // A pasted image, stored as a data URL, shown as a thumbnail in the box.
+  image?: string;
 }
 
 export function createNode(text: string): MindMapNode {
@@ -89,6 +95,19 @@ export function setLink(root: MindMapNode, id: string, link: string): void {
 export function setIcon(root: MindMapNode, id: string, icon: string): void {
   const node = findNode(root, id);
   if (node) node.icon = icon.trim() === "" ? undefined : icon.trim();
+}
+
+export function cycleStatus(root: MindMapNode, id: string): void {
+  const node = findNode(root, id);
+  if (!node) return;
+  if (node.status === undefined) node.status = "todo";
+  else if (node.status === "todo") node.status = "done";
+  else node.status = undefined;
+}
+
+export function setImage(root: MindMapNode, id: string, image: string | undefined): void {
+  const node = findNode(root, id);
+  if (node) node.image = image;
 }
 
 function isSelfOrDescendant(node: MindMapNode, id: string): boolean {

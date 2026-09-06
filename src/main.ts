@@ -4,6 +4,7 @@ import { addChild, createNode, type MindMapNode } from "./model";
 import { createWorkspace } from "./workspace";
 import { loadFromPath } from "./persistence";
 import { initTheme } from "./theme";
+import { initFontFamily } from "./fonts";
 
 function buildSampleTree() {
   const root = createNode("Canopy");
@@ -13,6 +14,7 @@ function buildSampleTree() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   initTheme();
+  initFontFamily();
   const app = document.querySelector<HTMLDivElement>("#app")!;
 
   // A .canopy file double-clicked in Finder launches us with its path

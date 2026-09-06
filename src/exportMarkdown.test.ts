@@ -41,6 +41,18 @@ describe("toMarkdown", () => {
     expect(toMarkdown(root)).toBe(["# Root", "", "- 🚀 A"].join("\n") + "\n");
   });
 
+  it("prefixes a checklist item's bullet with standard task-list syntax", () => {
+    const root = createNode("Root");
+    const todo = addChild(root, "Todo item");
+    todo.status = "todo";
+    const done = addChild(root, "Done item");
+    done.status = "done";
+
+    expect(toMarkdown(root)).toBe(
+      ["# Root", "", "- [ ] Todo item", "- [x] Done item"].join("\n") + "\n",
+    );
+  });
+
   it("combines icon + link + notes on the same node", () => {
     const root = createNode("Root");
     const a = addChild(root, "A");

@@ -18,7 +18,7 @@ function render(root: ReturnType<typeof createNode>, edgeStyle: EdgeStyle = "cur
   return renderMindMap(
     setup(),
     root,
-    { selectedId: null, editingId: null, edgeStyle },
+    { selectedIds: new Set(), editingId: null, edgeStyle },
     {
       onEditCommit() {},
       onEditCancel() {},
@@ -69,6 +69,41 @@ describe("renderMindMap", () => {
     expect(fill).toMatch(/^rgb\(/);
     const [r, g, b] = fill.match(/\d+/g)!.map(Number);
     expect(Math.min(r, g, b)).toBeGreaterThan(150);
+  });
+
+  it("grows a node's box to fit its image thumbnail", () => {
+    const plainRoot = createNode("Root");
+    addChild(plainRoot, "Branch");
+    render(plainRoot);
+    const plainHeight = Number(
+      container.querySelector(".mm-node-box")!.getAttribute("height"),
+    );
+
+    const imageRoot = createNode("Root");
+    const withImage = addChild(imageRoot, "Branch");
+    withImage.image = "data:image/png;base64,abc";
+    render(imageRoot);
+    const g = container.querySelector(`[data-node-id="${withImage.id}"]`)!;
+    const imageHeight = Number(g.querySelector(".mm-node-box")!.getAttribute("height"));
+
+    expect(imageHeight).toBeGreaterThan(plainHeight);
+    expect(g.querySelector("image")).not.toBeNull();
+  });
+
+  it("shows a status badge only when a node's status is set", () => {
+    const root = createNode("Root");
+    const plain = addChild(root, "Plain");
+    const todo = addChild(root, "Todo");
+    todo.status = "todo";
+    const done = addChild(root, "Done");
+    done.status = "done";
+    render(root);
+
+    expect(container.querySelector(`[data-node-id="${plain.id}"] .mm-status-badge`)).toBeNull();
+    expect(container.querySelector(`[data-node-id="${todo.id}"] .mm-status-badge`)).not.toBeNull();
+    expect(
+      container.querySelector(`[data-node-id="${done.id}"] .mm-status-badge.mm-status-done`),
+    ).not.toBeNull();
   });
 
   it("draws a cubic bezier for curved edges and a right-angle path for straight ones", () => {
