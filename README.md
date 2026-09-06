@@ -43,19 +43,30 @@ before the first launch:
   positioning and snap back to the auto-computed layout, or **zoom to
   fit** (toolbar button or `0`) to frame the whole tree.
 - Collapse/expand a subtree via the toggle on any node with children.
-- Add notes (`N`), a link (`L`), or an icon/emoji (`I`) to the selected
-  node. A link renders as a clickable badge that opens in your default
-  browser.
-- Work on multiple maps at once via the tab strip above the toolbar.
-- Pan (drag empty canvas) and zoom (scroll wheel).
-- Recolor a branch from the toolbar's color swatches.
-- Switch between curved and straight edges.
-- Toggle dark mode from the tab strip.
+- Add notes (`N`), a link (`L`), an icon/emoji (`I`), or a checklist status
+  (`T` cycles todo/done) to the selected node. A link renders as a
+  clickable badge that opens in your default browser.
+- Select multiple nodes with shift+click for bulk recolor, bulk delete, or
+  dragging the whole group together.
+- Find a node with `⌘F`; jump between matches with the arrows next to it.
+- Press `F` (or the toolbar button) to focus on a branch, dimming
+  everything else.
+- Paste an image from your clipboard onto the selected node.
+- Work on multiple maps at once via the tab strip above the toolbar, or
+  start a new one from a starter template.
+- Pan (drag empty canvas) and zoom (scroll wheel), with a minimap for
+  quick navigation on larger maps.
+- Recolor a branch from the toolbar's color swatches, including a custom
+  color picker.
+- Switch between curved/straight edges, or a hand-drawn "sketchy" style.
+- Pick a font (including a hand-drawn one) and toggle dark mode from the
+  tab strip.
 - Undo/redo (⌘Z / ⌘⇧Z) for every change.
-- Save (⌘S) and open (⌘O) `.canopy` files, a plain JSON format. On
-  macOS, double-clicking a `.canopy` file opens it directly in Canopy.
-- Export the current map as PNG, SVG, or a Markdown outline from the
-  toolbar — pick the format via the save dialog's filename extension.
+- Save (⌘S) and open (⌘O) `.canopy` files, a plain JSON format, or reopen
+  one from the toolbar's recent-files list. On macOS, double-clicking a
+  `.canopy` file opens it directly in Canopy.
+- Import a Markdown outline, or export the current map as PNG, SVG, or a
+  Markdown outline, from the toolbar. Print directly from the toolbar too.
 
 ## Development
 
@@ -80,14 +91,21 @@ small starter tree so you can jump straight into your own map.
 | `src/model.ts` | The tree data structure and pure mutation helpers. |
 | `src/layout.ts` | Computes every node's position from the tree. |
 | `src/textwrap.ts` | Measures and wraps node text. |
-| `src/render.ts` | Draws the tree as SVG. |
+| `src/render.ts` | Draws the tree as SVG, including the hand-drawn "sketchy" style, multi-select highlighting, and focus-mode dimming. |
 | `src/app.ts` | Owns UI state and every event listener for one map. |
 | `src/toolbar.ts` | The floating toolbar. |
 | `src/tabs.ts` / `src/workspace.ts` | The tab strip and multi-map coordination. |
 | `src/history.ts` | Undo/redo stack. |
 | `src/persistence.ts` | Save/load to a local `.canopy` file. |
 | `src/exportFile.ts`, `exportImage.ts`, `exportMarkdown.ts` | Export to PNG/SVG/Markdown. |
+| `src/importMarkdown.ts` | Import a Markdown outline as a map. |
+| `src/printMap.ts` | Print the current map. |
+| `src/recentFiles.ts` | The toolbar's Open Recent list. |
+| `src/templates.ts` | Starter templates for the "+" button. |
 | `src/theme.ts` | Dark mode. |
+| `src/fonts.ts` | The font picker. |
+| `src/search.ts` | The find bar (`⌘F`). |
+| `src/minimap.ts` | The navigable minimap. |
 | `src-tauri/` | The Tauri (Rust) shell: window, file dialogs, file system access, and file-association handling. |
 
 See `CLAUDE.md` for the design decisions behind these files and a list of
