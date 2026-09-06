@@ -17,8 +17,11 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 
-# Agent fork worktrees (temporary, created/removed by the harness)
-.claude/
+# Agent fork worktrees (temporary, created/removed by the harness) and other
+# local Claude Code state — but custom slash commands are shared, so track those.
+.claude/*
+!.claude/commands
+!.claude/commands/**
 .DS_Store
 *.suo
 *.ntvs*
