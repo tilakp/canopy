@@ -56,14 +56,14 @@ function buildTree(): { root: MindMapNode; child: MindMapNode } {
 
 // Types into the open title input and ends the edit by clicking away.
 function commitEdit(text: string) {
-  const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+  const input = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
   input.value = text;
   input.dispatchEvent(new Event("blur"));
 }
 
 function editInputKey(key: string) {
   container
-    .querySelector<HTMLInputElement>("input.mm-edit-input")!
+    .querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!
     .dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
 
@@ -96,7 +96,7 @@ describe("startApp interactions", () => {
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireClick(nodeEl(container, child.id), 100, 100, 120);
 
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
   });
 
   it("does NOT enter edit mode when the second click is too slow", () => {
@@ -106,7 +106,7 @@ describe("startApp interactions", () => {
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireClick(nodeEl(container, child.id), 100, 100, 1000);
 
-    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).toBeNull();
   });
 
   it("tolerates realistic timing and hand-tremor position drift between clicks", () => {
@@ -117,7 +117,7 @@ describe("startApp interactions", () => {
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireClick(nodeEl(container, child.id), 106, 104, 450);
 
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
   });
 
   it("adds a child on Tab and enters edit mode", () => {
@@ -128,7 +128,7 @@ describe("startApp interactions", () => {
     fireKey("Tab");
 
     expect(child.children).toHaveLength(1);
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
   });
 
   it("removes the selected node on Delete", () => {
@@ -147,10 +147,10 @@ describe("startApp interactions", () => {
 
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireKey("Tab");
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
 
     fireKey("Escape");
-    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).toBeNull();
   });
 
   it("adds a sibling on Enter", () => {
@@ -259,14 +259,14 @@ describe("startApp interactions", () => {
     startApp(container, root);
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireClick(nodeEl(container, child.id), 100, 100, 120);
-    const overlayLeft = container.querySelector<HTMLInputElement>("input.mm-edit-input")!.style.left;
+    const overlayLeft = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.style.left;
 
     container.dispatchEvent(
       new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -100 }),
     );
     await new Promise((resolve) => requestAnimationFrame(resolve));
 
-    const overlay = container.querySelector<HTMLInputElement>("input.mm-edit-input");
+    const overlay = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input");
     expect(overlay).not.toBeNull();
     expect(overlay!.style.left).not.toBe(overlayLeft);
   });
@@ -418,12 +418,12 @@ describe("startApp interactions", () => {
 
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireKey("Tab");
-    const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+    const input = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
     input.value = "typed while editing";
 
     fireKeyMeta("z"); // should be a no-op at the app level (input handles its own undo)
     expect(input.value).toBe("typed while editing");
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
   });
 
   function isSelected(id: string): boolean {
@@ -586,7 +586,7 @@ describe("startApp interactions", () => {
     // Tab on a collapsed node opens it, so the new child can be edited.
     expect(a.collapsed).toBe(false);
     expect(a.children).toHaveLength(2);
-    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
   });
 
   it("moves the selection to a node when collapsing hides the selected descendant", () => {
@@ -668,7 +668,7 @@ describe("startApp interactions", () => {
     startApp(container, root);
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireKey("F2");
-    const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+    const input = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
     input.value = "Saved text";
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true, cancelable: true }));
 
@@ -694,17 +694,17 @@ describe("startApp interactions", () => {
     startApp(container, root);
 
     fireKey("Tab");
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "One";
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "One";
     editInputKey("Enter");
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Two";
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "Two";
     editInputKey("Tab");
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Two child";
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "Two child";
     editInputKey("Enter");
     editInputKey("Escape");
 
     expect(root.children.map((c) => c.text)).toEqual(["One", "Two"]);
     expect(root.children[1].children.map((c) => c.text)).toEqual(["Two child"]);
-    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).toBeNull();
   });
 
   it("only commits on Enter while editing an existing node", () => {
@@ -712,11 +712,11 @@ describe("startApp interactions", () => {
     startApp(container, root);
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireKey("F2");
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Renamed";
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "Renamed";
     editInputKey("Enter");
 
     expect(root.children.map((c) => c.text)).toEqual(["Renamed"]);
-    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+    expect(container.querySelector("textarea.mm-edit-input")).toBeNull();
   });
 
   it("opens the selected node for editing with F2 or Space", () => {
@@ -725,7 +725,7 @@ describe("startApp interactions", () => {
     fireClick(nodeEl(container, child.id), 100, 100, 0);
 
     fireKey(" ");
-    expect(container.querySelector<HTMLInputElement>("input.mm-edit-input")?.value).toBe("Child");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")?.value).toBe("Child");
   });
 
   it("toggles the keyboard shortcut list with ? and closes it with Escape", () => {
@@ -801,5 +801,53 @@ describe("startApp interactions", () => {
     expect(child.collapsed).toBe(true);
     expect(kid.collapsed).toBe(true);
   });
-});
 
+  it("edits a title in place with the node's own fill", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const fill = nodeEl(container, child.id).querySelector(".mm-node-box")!.getAttribute("fill");
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
+    expect(editor.style.background.match(/\d+/g)).toEqual(fill!.match(/\d+/g));
+    expect(nodeEl(container, child.id).classList.contains("mm-editing")).toBe(true);
+  });
+
+  it("opens the notes editor from the notes icon, in a labeled panel", () => {
+    const { root, child } = buildTree();
+    child.notes = "Some notes";
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id).querySelector(".mm-notes-badge")!, 100, 100, 0);
+
+    const panel = container.querySelector(".mm-field-panel")!;
+    expect(panel.querySelector(".mm-field-label")!.textContent).toBe("Notes");
+    expect(panel.querySelector<HTMLTextAreaElement>(".mm-notes-input")!.value).toBe("Some notes");
+  });
+
+  it("saves notes on ⌘Enter", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("n");
+    const notes = container.querySelector<HTMLTextAreaElement>(".mm-notes-input")!;
+    notes.value = "Line one";
+    notes.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
+
+    expect(child.notes).toBe("Line one");
+    expect(container.querySelector(".mm-notes-input")).toBeNull();
+  });
+
+  it("closes the branch color menu on a click outside it", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    container.querySelector<HTMLButtonElement>(".mm-color-btn")!.click();
+    const panel = container.querySelector<HTMLElement>(".mm-color-panel")!;
+    expect(panel.hidden).toBe(false);
+
+    fireClick(container, 700, 500, 5000);
+    expect(panel.hidden).toBe(true);
+  });
+});

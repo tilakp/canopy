@@ -1,3 +1,8 @@
+import { CLOSE_ICON } from "./tabs";
+
+const UP_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const DOWN_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
 export interface SearchCallbacks {
   onQueryChange(query: string): void;
   onNext(): void;
@@ -49,18 +54,18 @@ export function createSearchBar(container: HTMLElement, callbacks: SearchCallbac
   const countEl = document.createElement("span");
   countEl.className = "mm-search-count";
 
-  function navButton(glyph: string, title: string, onClick: () => void): HTMLButtonElement {
+  function navButton(icon: string, title: string, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement("button");
     btn.className = "mm-search-btn";
-    btn.textContent = glyph;
+    btn.innerHTML = icon;
     btn.title = title;
     btn.addEventListener("click", onClick);
     return btn;
   }
 
-  const prevBtn = navButton("↑", "Previous match (Shift+Enter)", () => callbacks.onPrev());
-  const nextBtn = navButton("↓", "Next match (Enter)", () => callbacks.onNext());
-  const closeBtn = navButton("×", "Close (Esc)", () => callbacks.onClose());
+  const prevBtn = navButton(UP_ICON, "Previous match (Shift+Enter)", () => callbacks.onPrev());
+  const nextBtn = navButton(DOWN_ICON, "Next match (Enter)", () => callbacks.onNext());
+  const closeBtn = navButton(CLOSE_ICON, "Close (Esc)", () => callbacks.onClose());
 
   el.appendChild(input);
   el.appendChild(countEl);

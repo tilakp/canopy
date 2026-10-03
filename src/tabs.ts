@@ -2,6 +2,10 @@ import type { MindMapNode } from "./model";
 import { TEMPLATES } from "./templates";
 import { FONT_OPTIONS } from "./fonts";
 
+const SUN_ICON = `<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+const MOON_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+export const CLOSE_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
 export interface TabInfo {
   id: string;
   title: string;
@@ -58,9 +62,16 @@ export function createTabStrip(container: HTMLElement, callbacks: TabsCallbacks)
     templatePanel.hidden = !templatePanel.hidden;
   });
   container.appendChild(templatePanel);
+  // Closes on a click anywhere outside it, or on Esc, like the toolbar's.
+  container.addEventListener("pointerdown", (e) => {
+    if (!templatePanel.contains(e.target as Node) && !newBtn.contains(e.target as Node)) templatePanel.hidden = true;
+  });
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") templatePanel.hidden = true;
+  });
 
   const themeBtn = document.createElement("button");
-  themeBtn.className = "mm-tab-new";
+  themeBtn.className = "mm-tab-new mm-tab-icon";
   themeBtn.addEventListener("click", () => callbacks.onToggleTheme());
 
   const fontSelect = document.createElement("select");
@@ -79,7 +90,7 @@ export function createTabStrip(container: HTMLElement, callbacks: TabsCallbacks)
   return {
     element: el,
     update(tabs, activeId, isDark, fontId) {
-      themeBtn.textContent = isDark ? "☀️" : "🌙";
+      themeBtn.innerHTML = isDark ? SUN_ICON : MOON_ICON;
       themeBtn.title = isDark ? "Switch to light mode" : "Switch to dark mode";
       fontSelect.value = fontId;
       el.innerHTML = "";
@@ -100,7 +111,7 @@ export function createTabStrip(container: HTMLElement, callbacks: TabsCallbacks)
         const closeBtn = document.createElement("button");
         closeBtn.className = "mm-tab-close";
         closeBtn.title = "Close map";
-        closeBtn.textContent = "×";
+        closeBtn.innerHTML = CLOSE_ICON;
         closeBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           callbacks.onClose(tab.id);

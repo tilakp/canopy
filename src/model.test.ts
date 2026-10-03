@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addChild, cloneTree, countDescendants, createNode, cycleStatus, insertSiblingAfter, moveSibling, reparentNode, setCollapsedDeep, setImage } from "./model";
+import { addChild, cloneTree, countDescendants, createNode, cycleStatus, insertSiblingAfter, moveSibling, reparentNode, setCollapsedDeep, setImage, setLink } from "./model";
 
 describe("moveSibling", () => {
   it("swaps a node with the next sibling", () => {
@@ -160,4 +160,16 @@ describe("setCollapsedDeep", () => {
     setCollapsedDeep(root, false);
     expect([root.collapsed, a.collapsed, b.collapsed]).toEqual([false, false, false]);
   });
+
+describe("setLink", () => {
+  it("adds https:// to a link typed without a scheme, and keeps other schemes", () => {
+    const root = createNode("Root");
+    setLink(root, root.id, " example.com/page ");
+    expect(root.link).toBe("https://example.com/page");
+    setLink(root, root.id, "mailto:a@example.com");
+    expect(root.link).toBe("mailto:a@example.com");
+    setLink(root, root.id, "  ");
+    expect(root.link).toBeUndefined();
+  });
+});
 });

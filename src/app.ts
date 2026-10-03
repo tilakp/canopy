@@ -629,6 +629,13 @@ export function startApp(
   container.addEventListener("pointerdown", (e) => {
     if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
 
+    // A click on an editor panel's label must not end the edit: no focus
+    // change (preventDefault), and none of the canvas handling below.
+    if ((e.target as Element).closest(".mm-field-panel")) {
+      e.preventDefault();
+      return;
+    }
+
     const linkBadge = (e.target as Element).closest(".mm-link-badge");
     if (linkBadge) {
       const nodeId = linkBadge.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
@@ -653,6 +660,17 @@ export function startApp(
     e.preventDefault();
     container.focus();
     if (editingId || notesEditingId || iconEditingId || linkEditingId) return;
+
+    const notesBadge = (e.target as Element).closest(".mm-notes-badge");
+    if (notesBadge) {
+      const nodeId = notesBadge.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+      if (nodeId) {
+        selectOnly(nodeId);
+        notesEditingId = nodeId;
+        render();
+      }
+      return;
+    }
 
     const collapseToggle = (e.target as Element).closest(".mm-collapse-toggle");
     if (collapseToggle) {

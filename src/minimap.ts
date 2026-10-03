@@ -117,7 +117,10 @@ export function createMinimap(container: HTMLElement, callbacks: MinimapCallback
         rect.setAttribute("width", String(w));
         rect.setAttribute("height", String(h));
         rect.setAttribute("rx", "1");
-        rect.setAttribute("fill", pos.color);
+        // The root has no branch color of its own; a theme color keeps it
+        // from showing as a black block in light mode.
+        if (pos.depth === 0) rect.setAttribute("class", "mm-minimap-root");
+        else rect.setAttribute("fill", pos.color);
         svg.appendChild(rect);
       }
 

@@ -141,4 +141,28 @@ describe("computeFitCamera", () => {
     const camera = computeFitCamera(new DOMRect(0, 0, 0, 0), { width: 800, height: 600 });
     expect(camera).toEqual({ x: 400, y: 300, scale: 1 });
   });
+
+  it("gives badges their own room in the box instead of drawing over the text", () => {
+    const root = createNode("Root");
+    const plain = addChild(root, "Same text");
+    const badged = addChild(root, "Same text");
+    badged.status = "todo";
+    badged.notes = "details";
+    badged.link = "https://example.com";
+    const { positions } = render(root);
+
+    expect(positions.get(badged.id)!.width - positions.get(plain.id)!.width).toBe(20 + 18 * 2);
+    expect(container.querySelector(`[data-node-id="${badged.id}"] .mm-notes-badge title`)!.textContent).toBe("details");
+  });
+
+  it("shows a how-to-start hint only on a blank map", () => {
+    const blank = createNode("Root");
+    render(blank);
+    expect(container.querySelector(".mm-empty-hint")).not.toBeNull();
+
+    const withChild = createNode("Root");
+    addChild(withChild, "Idea");
+    render(withChild);
+    expect(container.querySelector(".mm-empty-hint")).toBeNull();
+  });
 });

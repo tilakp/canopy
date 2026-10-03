@@ -51,8 +51,9 @@ before the first launch:
   click that number (or press `→`) to open it again. Option-click folds or
   opens every level below.
 - Add notes (`N`), a link (`L`), an icon/emoji (`I`), or a checklist status
-  (`T` cycles todo/done) to the selected node. A link renders as a
-  clickable badge that opens in your default browser.
+  (`T` cycles todo/done) to the selected node. Notes and links show as small
+  icons in the node: point at the notes icon to read the notes, or click it
+  to edit them, and click the link icon to open the link in your browser.
 - Select multiple nodes with shift+click for bulk recolor, bulk delete, or
   dragging the whole group together.
 - Find a node with `⌘F`; jump between matches with the arrows next to it.
@@ -63,7 +64,7 @@ before the first launch:
   start a new one from a starter template.
 - Pan (drag empty canvas) and zoom (scroll wheel), with a minimap for
   quick navigation on larger maps.
-- Recolor a branch from the toolbar's color swatches, including a custom
+- Recolor a branch from the toolbar's color button, including a custom
   color picker.
 - Switch between curved/straight edges, or a hand-drawn "sketchy" style.
 - Pick a font (including a hand-drawn one) and toggle dark mode from the

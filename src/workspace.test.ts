@@ -124,8 +124,8 @@ describe("createWorkspace", () => {
     const workspace = createWorkspace(container, createNode("First"), null);
     workspace.openInNewTab(createNode("Second"), null);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "New idea";
-    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.dispatchEvent(new Event("blur"));
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "New idea";
+    container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.dispatchEvent(new Event("blur"));
     expect(tabEls()[1].textContent).toContain("•");
 
     const asked: string[] = [];

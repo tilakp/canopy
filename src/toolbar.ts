@@ -118,6 +118,7 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
 
   const recentBtn = makeIconButton(RECENT_ICON, "Open Recent", () => {
     if (recentPanel.hidden) renderRecentPanel();
+    colorPanel.hidden = true;
     recentPanel.hidden = !recentPanel.hidden;
   });
   recentWrap.appendChild(recentBtn);
@@ -137,15 +138,36 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
   historyGroup.appendChild(undoBtn);
   historyGroup.appendChild(redoBtn);
 
+  // One button that shows the selection's branch color and opens the
+  // swatches, in place of eight always-visible swatches: those made the
+  // toolbar wider than the default window.
   const colorGroup = document.createElement("div");
-  colorGroup.className = "mm-toolbar-group";
+  colorGroup.className = "mm-toolbar-group mm-popover-anchor";
+  const colorBtn = document.createElement("button");
+  colorBtn.className = "mm-edge-btn mm-color-btn";
+  colorBtn.title = "Branch color";
+  const colorDot = document.createElement("span");
+  colorDot.className = "mm-color-dot";
+  colorBtn.appendChild(colorDot);
+  const colorPanel = document.createElement("div");
+  colorPanel.className = "mm-popover mm-color-panel";
+  colorPanel.hidden = true;
+  colorBtn.addEventListener("click", () => {
+    recentPanel.hidden = true;
+    colorPanel.hidden = !colorPanel.hidden;
+  });
+  colorGroup.append(colorBtn, colorPanel);
+
   const swatchButtons = BRANCH_COLORS.map((color) => {
     const btn = document.createElement("button");
     btn.className = "mm-swatch";
     btn.style.background = color;
     btn.title = "Set branch color";
-    btn.addEventListener("click", () => callbacks.onPickColor(color));
-    colorGroup.appendChild(btn);
+    btn.addEventListener("click", () => {
+      callbacks.onPickColor(color);
+      colorPanel.hidden = true;
+    });
+    colorPanel.appendChild(btn);
     return { color, btn };
   });
 
@@ -159,7 +181,7 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
   customInput.type = "color";
   customInput.addEventListener("input", () => callbacks.onPickColor(customInput.value));
   customSwatch.appendChild(customInput);
-  colorGroup.appendChild(customSwatch);
+  colorPanel.appendChild(customSwatch);
 
   const edgeGroup = document.createElement("div");
   edgeGroup.className = "mm-toolbar-group";
@@ -204,10 +226,28 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
   el.appendChild(tidyGroup);
   container.appendChild(el);
 
+  // Open popovers close on a click anywhere outside them, or on Esc.
+  const popovers: [HTMLElement, HTMLElement][] = [
+    [recentWrap, recentPanel],
+    [colorGroup, colorPanel],
+  ];
+  container.addEventListener("pointerdown", (e) => {
+    for (const [anchor, panel] of popovers) {
+      if (!anchor.contains(e.target as Node)) panel.hidden = true;
+    }
+  });
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") for (const [, panel] of popovers) panel.hidden = true;
+  });
+
   return {
     element: el,
     update({ hasSelection, activeColor, edgeStyle, sketchy, focused, minimapVisible, canUndo, canRedo }) {
       el.dataset.disabled = String(!hasSelection);
+      colorBtn.disabled = !hasSelection;
+      if (!hasSelection) colorPanel.hidden = true;
+      colorDot.style.background = activeColor ?? "";
+      colorDot.dataset.mixed = String(activeColor === null);
       for (const { color, btn } of swatchButtons) {
         btn.dataset.active = String(color === activeColor);
       }

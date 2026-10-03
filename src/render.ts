@@ -107,7 +107,14 @@ interface NodeVisual {
   wrapped: WrappedText;
   style: BoxStyle;
   size: NodeSize;
+  // Room inside the box before the text (checklist circle) and after it
+  // (notes and link icons), so badges never sit on top of the text.
+  leading: number;
+  trailing: number;
 }
+
+const STATUS_SLOT = 20;
+const META_ICON_SLOT = 18;
 
 function fontString(style: BoxStyle): string {
   return `${style.fontWeight} ${style.fontSize}px ${getFontFamily()}`;
@@ -122,7 +129,9 @@ function buildVisuals(root: MindMapNode): Map<string, NodeVisual> {
     const style = node.id === root.id ? ROOT_STYLE : LEAF_STYLE;
     const displayText = (node.icon ? node.icon + " " : "") + (node.text || " ");
     const wrapped = wrapText(displayText, fontString(style), style.maxTextWidth);
-    const textWidth = wrapped.width + style.paddingX * 2;
+    const leading = node.status ? STATUS_SLOT : 0;
+    const trailing = ((node.notes ? 1 : 0) + (node.link ? 1 : 0)) * META_ICON_SLOT;
+    const textWidth = wrapped.width + style.paddingX * 2 + leading + trailing;
     const textHeight = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
     const size: NodeSize = node.image
       ? {
@@ -130,7 +139,7 @@ function buildVisuals(root: MindMapNode): Map<string, NodeVisual> {
           height: textHeight + IMAGE_THUMB_SIZE + IMAGE_GAP,
         }
       : { width: textWidth, height: textHeight };
-    visuals.set(node.id, { wrapped, style, size });
+    visuals.set(node.id, { wrapped, style, size, leading, trailing });
   }
   return visuals;
 }
@@ -187,12 +196,25 @@ export function renderMindMap(
   const camera = state.camera ?? computeInitialCamera(container, contentBBox, root.children.length === 0);
   content.setAttribute("transform", cameraTransform(camera));
 
+  // A blank map says how to start. Added after the bounding box is
+  // measured, so it does not move where a new map is placed.
+  if (root.children.length === 0 && !state.editingId) {
+    const rootLayout = positions.get(root.id)!;
+    const hint = document.createElementNS(SVG_NS, "text");
+    hint.setAttribute("class", "mm-empty-hint");
+    hint.setAttribute("x", String(rootLayout.x));
+    hint.setAttribute("y", String(rootLayout.y + rootLayout.height / 2 + 28));
+    hint.textContent = "Press Tab to add your first idea, or ? for all shortcuts";
+    content.appendChild(hint);
+  }
+
   if (state.editingId) {
     const node = findNode(root, state.editingId);
     const layout = node && positions.get(node.id);
     const visual = node && visuals.get(node.id);
     if (node && layout && visual) {
-      renderEditOverlay(container, node, layout, visual.style, camera, callbacks);
+      const fill = node.id === root.id ? rootFill() : boxFill(layout.color);
+      renderEditOverlay(container, node, layout, visual.style, fill, !!state.sketchy, camera, callbacks);
     }
   }
 
@@ -212,9 +234,10 @@ export function renderMindMap(
         container,
         layout,
         camera,
+        "Icon",
         node.icon ?? "",
-        "Emoji…",
-        70,
+        "An emoji, e.g. 🚀",
+        180,
         (value) => callbacks.onIconCommit(node.id, value),
         callbacks.onIconCancel,
       );
@@ -229,9 +252,10 @@ export function renderMindMap(
         container,
         layout,
         camera,
+        "Link",
         node.link ?? "",
         "https://…",
-        220,
+        260,
         (value) => callbacks.onLinkCommit(node.id, value),
         callbacks.onLinkCancel,
       );
@@ -498,8 +522,9 @@ function renderNode(
 
   const text = document.createElementNS(SVG_NS, "text");
   text.setAttribute("text-anchor", "middle");
-  text.setAttribute("class", `${isRoot ? "mm-root-text" : "mm-node-text"}${isEditing ? " mm-editing" : ""}`);
-  const centerX = layout.x + size.width / 2;
+  text.setAttribute("class", isRoot ? "mm-root-text" : "mm-node-text");
+  const { leading, trailing } = visual;
+  const centerX = layout.x + leading + (size.width - leading - trailing) / 2;
   // Text is normally centered as a block on the box's vertical center; an
   // image thumbnail above it shifts that block down to sit right below the
   // image instead (see buildVisuals for the matching size calculation).
@@ -523,24 +548,46 @@ function renderNode(
   } else if (hasChildren) {
     g.appendChild(renderFoldButton(layout, size, isRoot));
   }
-  if (node.notes) {
-    g.appendChild(renderBadge("📝", layout.x + 3, boxTop + size.height - 4, "mm-notes-badge"));
-  }
+  // Badges sit in their own slots on the first text line: the checklist
+  // circle before the text, the notes and link icons after it.
+  const rightSlotX = layout.x + size.width - style.paddingX - META_ICON_SLOT / 2 + 3;
   if (node.link) {
-    g.appendChild(renderBadge("🔗", layout.x + size.width - 15, boxTop + size.height - 4, "mm-link-badge"));
+    g.appendChild(renderMetaIcon(LINK_ICON_PATH, rightSlotX, firstLineCenterY, "mm-link-badge", node.link));
+  }
+  if (node.notes) {
+    const x = rightSlotX - (node.link ? META_ICON_SLOT : 0);
+    g.appendChild(renderMetaIcon(NOTES_ICON_PATH, x, firstLineCenterY, "mm-notes-badge", truncate(node.notes, 280)));
   }
   if (node.status) {
-    g.appendChild(renderStatusBadge(node.status, layout.x + 12, boxTop + 12));
+    g.appendChild(renderStatusBadge(node.status, layout.x + style.paddingX + 6, firstLineCenterY));
   }
 }
 
-function renderBadge(glyph: string, x: number, y: number, className: string): SVGTextElement {
-  const t = document.createElementNS(SVG_NS, "text");
-  t.setAttribute("class", className);
-  t.setAttribute("x", String(x));
-  t.setAttribute("y", String(y));
-  t.textContent = glyph;
-  return t;
+// 12x12 line icons centered on (0, 0), drawn in the muted text color.
+const NOTES_ICON_PATH = "M -4.5 -4 H 4.5 M -4.5 -1.3 H 4.5 M -4.5 1.4 H 4.5 M -4.5 4.1 H 1.5";
+const LINK_ICON_PATH =
+  "M -0.8 -3.2 L 0.8 -4.8 A 2.6 2.6 0 0 1 4.8 -0.8 L 3.2 0.8 M 0.8 3.2 L -0.8 4.8 A 2.6 2.6 0 0 1 -4.8 0.8 L -3.2 -0.8 M -1.8 1.8 L 1.8 -1.8";
+
+function renderMetaIcon(d: string, x: number, y: number, className: string, tooltip: string): SVGGElement {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", `mm-meta-icon ${className}`);
+  g.setAttribute("transform", `translate(${x} ${y})`);
+  g.appendChild(svgTitle(tooltip));
+  const hit = document.createElementNS(SVG_NS, "rect");
+  hit.setAttribute("class", "mm-fold-hit");
+  hit.setAttribute("x", "-8");
+  hit.setAttribute("y", "-8");
+  hit.setAttribute("width", "16");
+  hit.setAttribute("height", "16");
+  g.appendChild(hit);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  g.appendChild(path);
+  return g;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 // Checklist indicator, top-left corner: an empty circle outline for "todo",
@@ -725,29 +772,54 @@ function stopUnlessSave(e: KeyboardEvent): void {
   if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s")) e.stopPropagation();
 }
 
+// Edits the title in place: the node's box itself becomes the editor, with
+// the same fill, font, padding and corner radius, and it resizes as you
+// type using the same measurement the node uses, so what you see while
+// typing is what the node looks like after. The SVG node is hidden
+// meanwhile (.mm-node.mm-editing in styles.css). A textarea, not an input,
+// so a long title wraps onto more lines the way the node will.
 function renderEditOverlay(
   container: HTMLElement,
   node: MindMapNode,
   layout: NodeLayout,
   style: BoxStyle,
+  fill: string,
+  sketchy: boolean,
   camera: Camera,
   callbacks: RenderCallbacks,
 ): void {
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "mm-edit-input";
+  const input = document.createElement("textarea");
+  input.className = `mm-edit-input${style === ROOT_STYLE ? " mm-edit-root" : ""}`;
   input.value = node.text;
+  input.rows = 1;
+  input.spellcheck = false;
 
-  const centerX = layout.x + layout.width / 2;
-  const screenX = camera.x + centerX * camera.scale;
-  const screenY = camera.y + layout.y * camera.scale;
-  input.style.left = `${screenX}px`;
-  input.style.top = `${screenY}px`;
-  input.style.fontSize = `${style.fontSize * camera.scale}px`;
+  const scale = camera.scale;
+  input.style.left = `${camera.x + layout.x * scale}px`;
+  input.style.top = `${camera.y + layout.y * scale}px`;
+  input.style.fontSize = `${style.fontSize * scale}px`;
   input.style.fontWeight = String(style.fontWeight);
-  input.style.textAlign = "center";
-  input.style.transform = "translate(-50%, -50%)";
-  input.style.minWidth = `${(layout.width - style.paddingX * 2) * camera.scale}px`;
+  input.style.lineHeight = `${style.lineHeight * scale}px`;
+  input.style.padding = `${style.paddingY * scale}px ${style.paddingX * scale}px`;
+  // Sketchy boxes are hand-drawn rectangles, not rounded ones.
+  input.style.borderRadius = sketchy ? "2px" : `${style.rx * scale}px`;
+  input.style.background = fill;
+
+  const fit = () => {
+    const wrapped = wrapText(input.value || " ", fontString(style), style.maxTextWidth);
+    const width = Math.max(wrapped.width, MIN_EDIT_TEXT_WIDTH) + style.paddingX * 2;
+    const height = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
+    // +1px: the textarea wraps on its own, and a subpixel rounding
+    // difference must not push the last word onto a new line.
+    input.style.width = `${width * scale + 1}px`;
+    input.style.height = `${height * scale}px`;
+  };
+  input.addEventListener("input", () => {
+    // A title is one line of text that wraps; pasted line breaks become spaces.
+    if (input.value.includes("\n")) input.value = input.value.replace(/\s*\n\s*/g, " ");
+    fit();
+  });
+  fit();
 
   const commit = () => callbacks.onEditCommit(node.id, input.value);
   input.addEventListener("blur", commit);
@@ -771,8 +843,50 @@ function renderEditOverlay(
   input.select();
 }
 
-// Positioned below the box (rather than centered on it, like the title
-// edit overlay) so it doesn't obscure the node while editing its notes.
+const MIN_EDIT_TEXT_WIDTH = 24;
+
+// The notes, icon and link editors are small labeled panels below the
+// node (above it when there is no room below), so they don't cover the
+// node being edited and they say how to save or cancel.
+function createFieldPanel(
+  container: HTMLElement,
+  layout: NodeLayout,
+  camera: Camera,
+  label: string,
+  hint: string,
+  width: number,
+  expectedHeight: number,
+): HTMLDivElement {
+  const panel = document.createElement("div");
+  panel.className = "mm-field-panel";
+  panel.style.width = `${width}px`;
+
+  const head = document.createElement("div");
+  head.className = "mm-field-head";
+  const labelEl = document.createElement("span");
+  labelEl.className = "mm-field-label";
+  labelEl.textContent = label;
+  const hintEl = document.createElement("span");
+  hintEl.className = "mm-field-hint";
+  hintEl.textContent = hint;
+  head.append(labelEl, hintEl);
+  panel.appendChild(head);
+
+  const screenX = camera.x + (layout.x + layout.width / 2) * camera.scale;
+  const below = camera.y + (layout.y + layout.height / 2) * camera.scale + 8;
+  const above = camera.y + (layout.y - layout.height / 2) * camera.scale - 8;
+  const roomBelow = container.getBoundingClientRect().height - below;
+  panel.style.left = `${screenX}px`;
+  if (roomBelow < expectedHeight && above > expectedHeight) {
+    panel.style.top = `${above}px`;
+    panel.style.transform = "translate(-50%, -100%)";
+  } else {
+    panel.style.top = `${below}px`;
+    panel.style.transform = "translate(-50%, 0)";
+  }
+  return panel;
+}
+
 function renderNotesOverlay(
   container: HTMLElement,
   node: MindMapNode,
@@ -780,22 +894,26 @@ function renderNotesOverlay(
   camera: Camera,
   callbacks: RenderCallbacks,
 ): void {
+  const panel = createFieldPanel(container, layout, camera, "Notes", "⌘↵ to save · Esc to cancel", 260, 150);
   const textarea = document.createElement("textarea");
   textarea.className = "mm-notes-input";
-  textarea.placeholder = "Notes…";
+  textarea.placeholder = "Add details, context or a reminder";
   textarea.value = node.notes ?? "";
-
-  const centerX = layout.x + layout.width / 2;
-  const screenX = camera.x + centerX * camera.scale;
-  const screenY = camera.y + (layout.y + layout.height / 2 + 10) * camera.scale;
-  textarea.style.left = `${screenX}px`;
-  textarea.style.top = `${screenY}px`;
-  textarea.style.transform = "translate(-50%, 0)";
+  // Grows with its text, up to the max-height in styles.css.
+  const fit = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  };
+  textarea.addEventListener("input", fit);
 
   const commit = () => callbacks.onNotesCommit(node.id, textarea.value);
   textarea.addEventListener("blur", commit);
   textarea.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      textarea.removeEventListener("blur", commit);
+      commit();
+    } else if (e.key === "Escape") {
       e.preventDefault();
       textarea.removeEventListener("blur", commit);
       callbacks.onNotesCancel();
@@ -803,36 +921,32 @@ function renderNotesOverlay(
     stopUnlessSave(e);
   });
 
-  container.appendChild(textarea);
+  panel.appendChild(textarea);
+  container.appendChild(panel);
+  fit();
   textarea.focus();
 }
 
-// A single-line overlay below the node, shared by icon and link editing —
-// same positioning/commit/cancel wiring as the notes overlay, just a
-// narrower <input> instead of a <textarea>.
+// A single-line field in the same kind of panel, shared by icon and link
+// editing.
 function renderInlineTextOverlay(
   container: HTMLElement,
   layout: NodeLayout,
   camera: Camera,
+  label: string,
   value: string,
   placeholder: string,
   width: number,
   onCommit: (value: string) => void,
   onCancel: () => void,
 ): void {
+  const panel = createFieldPanel(container, layout, camera, label, "↵ to save · Esc to cancel", width, 80);
   const input = document.createElement("input");
   input.type = "text";
   input.className = "mm-inline-input";
   input.placeholder = placeholder;
   input.value = value;
-  input.style.width = `${width}px`;
-
-  const centerX = layout.x + layout.width / 2;
-  const screenX = camera.x + centerX * camera.scale;
-  const screenY = camera.y + (layout.y + layout.height / 2 + 10) * camera.scale;
-  input.style.left = `${screenX}px`;
-  input.style.top = `${screenY}px`;
-  input.style.transform = "translate(-50%, 0)";
+  input.spellcheck = false;
 
   const commit = () => onCommit(input.value);
   input.addEventListener("blur", commit);
@@ -849,7 +963,8 @@ function renderInlineTextOverlay(
     stopUnlessSave(e);
   });
 
-  container.appendChild(input);
+  panel.appendChild(input);
+  container.appendChild(panel);
   input.focus();
   input.select();
 }

@@ -115,9 +115,13 @@ export function setNotes(root: MindMapNode, id: string, notes: string): void {
   if (node) node.notes = notes.trim() === "" ? undefined : notes;
 }
 
+// A link typed without a scheme ("example.com") gets https://, or the
+// system cannot open it.
 export function setLink(root: MindMapNode, id: string, link: string): void {
   const node = findNode(root, id);
-  if (node) node.link = link.trim() === "" ? undefined : link.trim();
+  if (!node) return;
+  const trimmed = link.trim();
+  node.link = trimmed === "" ? undefined : /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 export function setIcon(root: MindMapNode, id: string, icon: string): void {
