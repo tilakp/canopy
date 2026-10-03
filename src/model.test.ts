@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addChild, cloneTree, createNode, cycleStatus, insertSiblingAfter, moveSibling, reparentNode, setImage } from "./model";
+import { addChild, cloneTree, countDescendants, createNode, cycleStatus, insertSiblingAfter, moveSibling, reparentNode, setCollapsedDeep, setImage } from "./model";
 
 describe("moveSibling", () => {
   it("swaps a node with the next sibling", () => {
@@ -132,5 +132,32 @@ describe("cloneTree", () => {
     expect(a.text).toBe("A");
     expect(a.offset).toEqual({ dx: 1, dy: 2 });
     expect(root.children).toHaveLength(1);
+  });
+});
+
+describe("countDescendants", () => {
+  it("counts nodes at every level below the node", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    addChild(addChild(a, "B"), "C");
+    addChild(root, "D");
+
+    expect(countDescendants(root)).toBe(4);
+    expect(countDescendants(a)).toBe(2);
+  });
+});
+
+describe("setCollapsedDeep", () => {
+  it("folds or opens a node and every node below it that has children", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(a, "B");
+    const leaf = addChild(b, "Leaf");
+
+    setCollapsedDeep(root, true);
+    expect([root.collapsed, a.collapsed, b.collapsed, leaf.collapsed]).toEqual([true, true, true, undefined]);
+
+    setCollapsedDeep(root, false);
+    expect([root.collapsed, a.collapsed, b.collapsed]).toEqual([false, false, false]);
   });
 });

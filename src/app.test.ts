@@ -741,5 +741,65 @@ describe("startApp interactions", () => {
     fireKey("Escape");
     expect(panel().hidden).toBe(true);
   });
+
+  it("shows a fold button on an open branch and a count pill on a folded one", () => {
+    const { root, child } = buildTree();
+    addChild(addChild(child, "Kid"), "Grandkid");
+    startApp(container, root);
+    const childNode = () => nodeEl(container, child.id);
+    expect(childNode().querySelector(".mm-fold-btn")).not.toBeNull();
+    expect(childNode().querySelector(".mm-fold-pill")).toBeNull();
+
+    fireClick(childNode().querySelector(".mm-fold-btn")!, 100, 100, 0);
+
+    const pill = childNode().querySelector(".mm-fold-pill")!;
+    expect(pill.querySelector("text")!.textContent).toBe("2");
+    expect(pill.querySelector("title")!.textContent).toBe("Show 2 hidden ideas");
+    expect(pill.classList.contains("mm-popping")).toBe(true);
+  });
+
+  it("animates only the nodes an open reveals, and only once", () => {
+    const { root, child } = buildTree();
+    const kid = addChild(child, "Kid");
+    child.collapsed = true;
+    startApp(container, root);
+
+    fireClick(nodeEl(container, child.id).querySelector(".mm-fold-pill")!, 100, 100, 0);
+    expect(nodeEl(container, kid.id).classList.contains("mm-revealing")).toBe(true);
+    expect(nodeEl(container, child.id).classList.contains("mm-revealing")).toBe(false);
+
+    fireClick(nodeEl(container, kid.id), 100, 100, 2000);
+    expect(nodeEl(container, kid.id).classList.contains("mm-revealing")).toBe(false);
+  });
+
+  it("folds and opens the selected branch with '.', and opens a folded one with ArrowRight", () => {
+    const { root, child } = buildTree();
+    addChild(child, "Kid");
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+
+    fireKey(".");
+    expect(child.collapsed).toBe(true);
+    fireKey(".");
+    expect(child.collapsed).toBe(false);
+
+    fireKey(".");
+    fireKey("ArrowRight");
+    expect(child.collapsed).toBe(false);
+    expect(isSelected(child.id)).toBe(true);
+  });
+
+  it("folds every level below on Option-click", () => {
+    const { root, child } = buildTree();
+    const kid = addChild(child, "Kid");
+    addChild(kid, "Grandkid");
+    startApp(container, root);
+
+    const down = new PointerEvent("pointerdown", { bubbles: true, altKey: true });
+    nodeEl(container, child.id).querySelector(".mm-fold-btn")!.dispatchEvent(down);
+
+    expect(child.collapsed).toBe(true);
+    expect(kid.collapsed).toBe(true);
+  });
 });
 

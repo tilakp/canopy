@@ -146,29 +146,92 @@ body {
   stroke: #ffffff;
 }
 
-.mm-collapse-toggle circle {
+.mm-collapse-toggle {
+  cursor: pointer;
+}
+
+.mm-fold-hit {
+  fill: transparent;
+}
+
+.mm-fold-btn circle {
   fill: var(--mm-surface, #ffffff);
   stroke: var(--mm-border-strong, #c7c9d1);
   stroke-width: 1;
 }
 
-.mm-collapse-toggle path {
+.mm-fold-btn path {
   stroke: var(--mm-text-muted, #6b6d76);
-  stroke-width: 1.5;
+  stroke-width: 1.6;
   stroke-linecap: round;
 }
 
-.mm-collapse-toggle {
-  cursor: pointer;
+/* Quiet at rest: the "−" shows only on hover or selection, like the "+". */
+.mm-fold-btn {
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 
-.mm-collapse-toggle:hover circle {
+.mm-node:hover .mm-fold-btn,
+.mm-selected .mm-fold-btn {
+  opacity: 1;
+}
+
+.mm-fold-btn:hover circle {
   fill: #4c6ef5;
   stroke: #4c6ef5;
 }
 
-.mm-collapse-toggle:hover path {
+.mm-fold-btn:hover path {
   stroke: #ffffff;
+}
+
+.mm-fold-pill text {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mm-fold-pill:hover rect:not(.mm-fold-hit) {
+  filter: brightness(1.1);
+}
+
+/* Opening a branch: its nodes fade in and slide out from the parent.
+   Folding one: the count pill pops in. Brief, per Apple HIG and Material
+   motion guidance, and off when the system asks for reduced motion. */
+@keyframes mm-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+
+@keyframes mm-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+.mm-revealing {
+  animation: mm-reveal 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.mm-popping > :not(title) {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mm-pop 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-revealing,
+  .mm-popping > :not(title) {
+    animation: none;
+  }
+
+  .mm-fold-btn {
+    transition: none;
+  }
 }
 
 .mm-edit-input {

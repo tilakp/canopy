@@ -1,6 +1,6 @@
 import rough from "roughjs";
 import type { RoughSVG } from "roughjs/bin/svg";
-import { findNode, findParent, type MindMapNode } from "./model";
+import { countDescendants, findNode, findParent, type MindMapNode } from "./model";
 import { computeLayout, type Edge, type NodeLayout, type NodeSize } from "./layout";
 import { wrapText, type WrappedText } from "./textwrap";
 import { getTheme } from "./theme";
@@ -40,11 +40,18 @@ const LEAF_STYLE: BoxStyle = {
 
 const ADD_BUTTON_GAP = 14;
 const ADD_BUTTON_RADIUS = 9;
-const COLLAPSE_TOGGLE_RADIUS = 7;
-// Extra horizontal room to clear the collapse toggle before the add-button
-// starts — without it the two circles (radius 7 + 9, only ADD_BUTTON_GAP
-// apart) overlap.
-const COLLAPSE_TOGGLE_CLEARANCE = COLLAPSE_TOGGLE_RADIUS * 2 + 6;
+// The fold control sits where a node's edges leave its box. An open node
+// shows a "−" button there (on hover or selection only); a folded node
+// shows a pill with the number of hidden ideas.
+const FOLD_BUTTON_RADIUS = 9;
+const FOLD_BUTTON_OFFSET = 12; // from the box's right edge to the button's center
+const FOLD_PILL_GAP = 4; // from the box's right edge to the pill
+const FOLD_PILL_HEIGHT = 18;
+// WCAG 2.5.8: pointer targets at least 24x24px.
+const MIN_TARGET = 24;
+// Extra horizontal room before the add-button for an open node's fold
+// button, so the two circles don't overlap.
+const FOLD_BUTTON_CLEARANCE = 20;
 
 // A pasted image is drawn as a small fixed-size thumbnail stacked above the
 // node's text, with a gap between the two.
@@ -70,6 +77,11 @@ export interface RenderState {
   focusId?: string | null;
   camera?: Camera;
   dropTargetId?: string | null;
+  // A node that was just opened: its newly visible nodes play the reveal
+  // animation. Set for one render only.
+  revealId?: string | null;
+  // A node that was just folded: its count pill plays the pop animation.
+  popId?: string | null;
 }
 
 export interface RenderCallbacks {
@@ -141,10 +153,15 @@ export function renderMindMap(
   const { positions, edges } = computeLayout(root, (node) => visuals.get(node.id)!.size);
   const rc = state.sketchy ? rough.svg(svg) : null;
   const focusSet = state.focusId ? computeFocusSet(root, state.focusId) : null;
+  const revealNode = state.revealId ? findNode(root, state.revealId) : null;
+  const revealSet = new Set(revealNode ? [...iterateNodes(revealNode)].map((n) => n.id) : []);
+  revealSet.delete(state.revealId ?? "");
 
   for (const edge of edges) {
     const dimmed = focusSet !== null && (!focusSet.has(edge.fromId) || !focusSet.has(edge.toId));
-    content.appendChild(renderEdge(edge, positions, state.edgeStyle, rc, dimmed));
+    const edgeEl = renderEdge(edge, positions, state.edgeStyle, rc, dimmed);
+    if (revealSet.has(edge.toId)) edgeEl.classList.add("mm-revealing");
+    content.appendChild(edgeEl);
   }
 
   for (const node of iterateNodes(root)) {
@@ -161,7 +178,9 @@ export function renderMindMap(
       node.id === state.dropTargetId,
       rc,
       focusSet !== null && !focusSet.has(node.id),
+      node.id === state.popId,
     );
+    if (revealSet.has(node.id)) content.lastElementChild!.classList.add("mm-revealing");
   }
 
   const contentBBox = safeBBox(content);
@@ -395,6 +414,7 @@ function renderNode(
   isDropTarget: boolean,
   rc: RoughSVG | null,
   isDimmed: boolean,
+  isJustFolded: boolean,
 ): void {
   const isSelected = selectedIds.has(node.id);
   const isEditing = editingId === node.id;
@@ -417,7 +437,13 @@ function renderNode(
   // the pointer ever reaches it. This spans continuously from the box
   // through the button so hover survives the trip.
   const hasChildren = node.children.length > 0;
-  const addButtonClearance = hasChildren ? COLLAPSE_TOGGLE_CLEARANCE : 0;
+  const hiddenCount = node.collapsed ? countDescendants(node) : 0;
+  const pillWidth = foldPillWidth(hiddenCount);
+  const addButtonClearance = !hasChildren
+    ? 0
+    : node.collapsed
+      ? Math.max(FOLD_BUTTON_CLEARANCE, FOLD_PILL_GAP * 2 + pillWidth - ADD_BUTTON_GAP + ADD_BUTTON_RADIUS)
+      : FOLD_BUTTON_CLEARANCE;
 
   const hoverZone = document.createElementNS(SVG_NS, "rect");
   hoverZone.setAttribute("class", "mm-hover-zone");
@@ -492,8 +518,10 @@ function renderNode(
   g.appendChild(text);
 
   g.appendChild(renderAddButton(layout, size, addButtonClearance));
-  if (hasChildren) {
-    g.appendChild(renderCollapseToggle(layout, size, !!node.collapsed));
+  if (hasChildren && node.collapsed) {
+    g.appendChild(renderFoldPill(layout, size, hiddenCount, pillWidth, isJustFolded));
+  } else if (hasChildren) {
+    g.appendChild(renderFoldButton(layout, size, isRoot));
   }
   if (node.notes) {
     g.appendChild(renderBadge("📝", layout.x + 3, boxTop + size.height - 4, "mm-notes-badge"));
@@ -536,35 +564,92 @@ function renderStatusBadge(status: "todo" | "done", x: number, y: number): SVGGE
   return g;
 }
 
-// Sits right on the box's trailing edge (distinct from the hover-only "+"
-// button further out), always visible when the node has children so the
-// user knows there's a subtree to toggle.
-function renderCollapseToggle(layout: NodeLayout, size: NodeSize, collapsed: boolean): SVGGElement {
+function foldPillWidth(count: number): number {
+  return Math.max(22, String(count).length * 7 + 14);
+}
+
+// An open branch needs no icon: its children are on screen. A small dot in
+// the branch color marks where the edges leave the box, and a "−" button
+// over it appears on hover or selection (see styles.css).
+function renderFoldButton(layout: NodeLayout, size: NodeSize, isRoot: boolean): SVGGElement {
+  const edgeX = layout.x + size.width;
+  const wrapper = document.createElementNS(SVG_NS, "g");
+
+  // The root's edges each take a different branch color, so one colored
+  // dot would match none of them.
+  if (!isRoot) {
+    const port = document.createElementNS(SVG_NS, "circle");
+    port.setAttribute("class", "mm-fold-port");
+    port.setAttribute("cx", String(edgeX));
+    port.setAttribute("cy", String(layout.y));
+    port.setAttribute("r", "3");
+    port.setAttribute("fill", layout.color);
+    wrapper.appendChild(port);
+  }
+
   const g = document.createElementNS(SVG_NS, "g");
-  g.setAttribute("class", "mm-collapse-toggle");
-  g.setAttribute("transform", `translate(${layout.x + size.width} ${layout.y})`);
+  g.setAttribute("class", "mm-collapse-toggle mm-fold-btn");
+  g.setAttribute("transform", `translate(${edgeX + FOLD_BUTTON_OFFSET} ${layout.y})`);
+  g.appendChild(svgTitle("Fold branch (.)"));
+  g.appendChild(hitRect(-MIN_TARGET / 2, MIN_TARGET));
 
   const circle = document.createElementNS(SVG_NS, "circle");
-  circle.setAttribute("r", "7");
+  circle.setAttribute("r", String(FOLD_BUTTON_RADIUS));
   g.appendChild(circle);
 
-  const glyph = document.createElementNS(SVG_NS, "path");
-  const s = 3.5;
-  // The usual disclosure convention (Finder, outline views): a right
-  // chevron when collapsed, a down chevron when expanded. A left chevron
-  // for "expanded" read as "go back", not "collapse". Deliberately not a
-  // "+" or "−", which would read as add/delete.
-  glyph.setAttribute(
-    "d",
-    collapsed
-      ? `M ${-s * 0.6} ${-s} L ${s * 0.7} 0 L ${-s * 0.6} ${s}`
-      : `M ${-s} ${-s * 0.6} L 0 ${s * 0.7} L ${s} ${-s * 0.6}`,
-  );
-  glyph.setAttribute("fill", "none");
-  glyph.setAttribute("stroke-linejoin", "round");
-  g.appendChild(glyph);
+  const minus = document.createElementNS(SVG_NS, "path");
+  minus.setAttribute("d", "M -4 0 H 4");
+  g.appendChild(minus);
+
+  wrapper.appendChild(g);
+  return wrapper;
+}
+
+// A folded branch says how much it hides: a pill in the branch color with
+// the number of hidden ideas, always visible (also in exports and print).
+// The fill and text color are attributes, not CSS, so exports keep them.
+function renderFoldPill(layout: NodeLayout, size: NodeSize, count: number, width: number, pop: boolean): SVGGElement {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", `mm-collapse-toggle mm-fold-pill${pop ? " mm-popping" : ""}`);
+  g.setAttribute("transform", `translate(${layout.x + size.width + FOLD_PILL_GAP} ${layout.y})`);
+  g.appendChild(svgTitle(`Show ${count} hidden ${count === 1 ? "idea" : "ideas"}`));
+  g.appendChild(hitRect(-2, Math.max(MIN_TARGET, width + 4)));
+
+  const pill = document.createElementNS(SVG_NS, "rect");
+  pill.setAttribute("y", String(-FOLD_PILL_HEIGHT / 2));
+  pill.setAttribute("width", String(width));
+  pill.setAttribute("height", String(FOLD_PILL_HEIGHT));
+  pill.setAttribute("rx", String(FOLD_PILL_HEIGHT / 2));
+  pill.setAttribute("fill", layout.color);
+  g.appendChild(pill);
+
+  const label = document.createElementNS(SVG_NS, "text");
+  label.setAttribute("x", String(width / 2));
+  label.setAttribute("text-anchor", "middle");
+  label.setAttribute("dominant-baseline", "central");
+  label.setAttribute("fill", "#ffffff");
+  label.textContent = String(count);
+  g.appendChild(label);
 
   return g;
+}
+
+function svgTitle(text: string): SVGTitleElement {
+  const title = document.createElementNS(SVG_NS, "title");
+  title.textContent = text;
+  return title;
+}
+
+// An invisible target, vertically centered on the control's origin, so a
+// small control still takes a 24px-tall click.
+function hitRect(x: number, width: number): SVGRectElement {
+  const rect = document.createElementNS(SVG_NS, "rect");
+  rect.setAttribute("class", "mm-fold-hit");
+  rect.setAttribute("x", String(x));
+  rect.setAttribute("y", String(-MIN_TARGET / 2));
+  rect.setAttribute("width", String(width));
+  rect.setAttribute("height", String(MIN_TARGET));
+  return rect;
 }
 
 function renderAddButton(layout: NodeLayout, size: NodeSize, extraClearance: number): SVGGElement {

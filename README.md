@@ -46,7 +46,10 @@ before the first launch:
   it there. Click **Tidy up** in the toolbar to clear all manual
   positioning and snap back to the auto-computed layout, or **zoom to
   fit** (toolbar button or `0`) to frame the whole tree.
-- Collapse/expand a subtree via the toggle on any node with children.
+- Fold a branch with the **−** that appears when you point at a node with
+  children, or press `.`. A folded branch shows how many ideas it hides;
+  click that number (or press `→`) to open it again. Option-click folds or
+  opens every level below.
 - Add notes (`N`), a link (`L`), an icon/emoji (`I`), or a checklist status
   (`T` cycles todo/done) to the selected node. A link renders as a
   clickable badge that opens in your default browser.

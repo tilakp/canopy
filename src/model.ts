@@ -97,9 +97,17 @@ export function setColor(root: MindMapNode, id: string, color: string): void {
   if (node) node.color = color;
 }
 
-export function toggleCollapsed(root: MindMapNode, id: string): void {
-  const node = findNode(root, id);
-  if (node) node.collapsed = !node.collapsed;
+// How many nodes are below `node`, at every level. A folded branch shows
+// this number, so "12" means 12 hidden ideas, not 12 direct children.
+export function countDescendants(node: MindMapNode): number {
+  return node.children.reduce((sum, child) => sum + 1 + countDescendants(child), 0);
+}
+
+// Folds or opens `node` and every node below it that has children (the
+// Option-click "all levels" action). Leaves get no `collapsed` flag.
+export function setCollapsedDeep(node: MindMapNode, collapsed: boolean): void {
+  if (node.children.length > 0) node.collapsed = collapsed;
+  for (const child of node.children) setCollapsedDeep(child, collapsed);
 }
 
 export function setNotes(root: MindMapNode, id: string, notes: string): void {

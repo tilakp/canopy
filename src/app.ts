@@ -9,12 +9,12 @@ import {
   moveSibling,
   removeNode,
   reparentNode,
+  setCollapsedDeep,
   setColor,
   setIcon,
   setImage,
   setLink,
   setNotes,
-  toggleCollapsed,
   updateText,
   type MindMapNode,
 } from "./model";
@@ -285,6 +285,10 @@ export function startApp(
     render();
   }
 
+  // Animation hints for the next render only (see RenderState).
+  let revealId: string | null = null;
+  let popId: string | null = null;
+
   function render(): void {
     // A focused node removed by an edit/undo would otherwise leave every
     // remaining node dimmed (computeFocusSet finds nothing to keep lit).
@@ -303,6 +307,8 @@ export function startApp(
         focusId,
         camera,
         dropTargetId,
+        revealId,
+        popId,
       },
       {
         onEditCommit(id, text, next) {
@@ -373,6 +379,8 @@ export function startApp(
         },
       },
     );
+    revealId = null;
+    popId = null;
     camera = result.camera;
     lastContentBBox = result.contentBBox;
     lastPositions = result.positions;
@@ -442,6 +450,27 @@ export function startApp(
     if (newNodeId && newNodeId === editingId) removeNewNode(newNodeId);
     newNodeId = null;
     editingId = null;
+  }
+
+  // Folds an open node or opens a folded one; with `allLevels`, every node
+  // below it gets the same state.
+  function toggleFold(id: string, allLevels = false): void {
+    const node = findNode(root, id);
+    if (!node || node.children.length === 0) return;
+    const fold = !node.collapsed;
+    if (allLevels) setCollapsedDeep(node, fold);
+    else node.collapsed = fold;
+    if (fold) {
+      popId = id;
+      // A selected node inside the subtree that just closed would stay
+      // the target of Delete, T, N, I and L while out of sight, so the
+      // selection moves up to the folded node.
+      if ([...selectedIds].some((sid) => sid !== id && findNode(node, sid))) selectOnly(id);
+    } else {
+      revealId = id;
+    }
+    commit();
+    render();
   }
 
   function hasSelectedAncestor(id: string): boolean {
@@ -628,18 +657,8 @@ export function startApp(
     const collapseToggle = (e.target as Element).closest(".mm-collapse-toggle");
     if (collapseToggle) {
       const nodeId = collapseToggle.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      if (nodeId) {
-        toggleCollapsed(root, nodeId);
-        // A selected node inside the subtree that just closed would stay
-        // the target of Delete, T, N, I and L while out of sight, so the
-        // selection moves up to the collapsed node.
-        const collapsed = findNode(root, nodeId)!;
-        if (collapsed.collapsed && [...selectedIds].some((id) => id !== nodeId && findNode(collapsed, id))) {
-          selectOnly(nodeId);
-        }
-        commit();
-        render();
-      }
+      // Option-click folds or opens every level below, as in macOS outline views.
+      if (nodeId) toggleFold(nodeId, e.altKey);
       return;
     }
 
@@ -1072,10 +1091,15 @@ export function startApp(
         selectOnly(parent.id);
         render();
       }
+    } else if (e.key === ".") {
+      e.preventDefault();
+      if (selectedId) toggleFold(selectedId, e.altKey);
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       const node = selectedId ? findNode(root, selectedId) : root;
-      if (node && !node.collapsed && node.children.length > 0) {
+      // On a folded node, Right opens it, as in a tree view.
+      if (node?.collapsed) toggleFold(node.id);
+      else if (node && node.children.length > 0) {
         selectOnly(node.children[0].id);
         render();
       }
