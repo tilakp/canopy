@@ -5,6 +5,7 @@ import { FONT_OPTIONS } from "./fonts";
 export interface TabInfo {
   id: string;
   title: string;
+  dirty: boolean;
 }
 
 export interface TabsCallbacks {
@@ -90,7 +91,8 @@ export function createTabStrip(container: HTMLElement, callbacks: TabsCallbacks)
 
         const title = document.createElement("span");
         title.className = "mm-tab-title";
-        title.textContent = tab.title || "Untitled";
+        title.textContent = (tab.dirty ? "• " : "") + (tab.title || "Untitled");
+        if (tab.dirty) title.title = "Unsaved changes";
         tabEl.appendChild(title);
 
         // Closing the last remaining tab is allowed (the workspace replaces

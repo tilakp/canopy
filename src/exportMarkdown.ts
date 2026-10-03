@@ -16,13 +16,16 @@ export function toMarkdown(root: MindMapNode): string {
 
 function renderNode(node: MindMapNode, depth: number): string[] {
   const indent = "  ".repeat(depth - 1);
-  const label = (node.icon ? `${node.icon} ` : "") + node.text;
+  // An empty bullet ("- ") is not a bullet to a Markdown parser, so it
+  // would drop the node on import and move its children to the wrong parent.
+  const label = (node.icon ? `${node.icon} ` : "") + (node.text.trim() || "Untitled");
   const bulletText = node.link ? `[${label}](${node.link})` : label;
   const checklistPrefix = node.status ? (node.status === "done" ? "[x] " : "[ ] ") : "";
 
   const lines = [`${indent}- ${checklistPrefix}${bulletText}`];
-  if (node.notes) {
-    lines.push(`${indent}  *${node.notes}*`);
+  // One italic line per notes line: a single *...* cannot span lines.
+  for (const noteLine of (node.notes ?? "").split("\n")) {
+    if (noteLine.trim()) lines.push(`${indent}  *${noteLine.trim()}*`);
   }
   for (const child of node.children) {
     lines.push(...renderNode(child, depth + 1));

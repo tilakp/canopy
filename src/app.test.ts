@@ -54,6 +54,19 @@ function buildTree(): { root: MindMapNode; child: MindMapNode } {
   return { root, child };
 }
 
+// Types into the open title input and ends the edit by clicking away.
+function commitEdit(text: string) {
+  const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+  input.value = text;
+  input.dispatchEvent(new Event("blur"));
+}
+
+function editInputKey(key: string) {
+  container
+    .querySelector<HTMLInputElement>("input.mm-edit-input")!
+    .dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+}
+
 let container: HTMLElement;
 
 beforeEach(() => {
@@ -345,8 +358,8 @@ describe("startApp interactions", () => {
     expect(countLeaves()).toBe(before + 1);
 
     // ⌘Z is deliberately a no-op while editing (so it doesn't fight the
-    // input's own native undo) — exit editing first, as a real user would.
-    fireKey("Escape");
+    // input's own native undo) — finish the edit first, as a real user would.
+    commitEdit("New node");
     fireKeyMeta("z");
     expect(countLeaves()).toBe(before);
 
@@ -389,7 +402,7 @@ describe("startApp interactions", () => {
 
     fireClick(nodeEl(container, child.id), 100, 100, 0);
     fireKey("Tab");
-    fireKey("Escape");
+    commitEdit("New node");
     expect(countLeaves()).toBe(before + 1);
 
     // Clicking around afterwards must not bury that edit under identical
@@ -532,4 +545,201 @@ describe("startApp interactions", () => {
     expect(child.link).toBe("https://example.com");
     expect(nodeEl(container, child.id).querySelector(".mm-link-badge")).not.toBeNull();
   });
+
+  it("does not undo back into the previous document after opening another one", () => {
+    const { root } = buildTree();
+    const app = startApp(container, root);
+    fireKey("Tab");
+    fireKey("Escape");
+
+    app.openRoot(createNode("Opened"), "/maps/opened.canopy");
+    fireKeyMeta("z");
+
+    expect(app.getTitle()).toBe("Opened");
+  });
+
+  it("is dirty after an edit and clean again after undoing it", () => {
+    const { root, child } = buildTree();
+    const app = startApp(container, root, "/maps/doc.canopy");
+    expect(app.isDirty()).toBe(false);
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("t");
+    expect(app.isDirty()).toBe(true);
+
+    fireKeyMeta("z");
+    expect(app.isDirty()).toBe(false);
+  });
+
+  it("does not move into a collapsed node's hidden children with ArrowRight", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const hidden = addChild(a, "Hidden");
+    a.collapsed = true;
+    startApp(container, root);
+
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    fireKey("ArrowRight");
+    fireKey("Tab");
+
+    expect(hidden.children).toHaveLength(0);
+    // Tab on a collapsed node opens it, so the new child can be edited.
+    expect(a.collapsed).toBe(false);
+    expect(a.children).toHaveLength(2);
+    expect(container.querySelector("input.mm-edit-input")).not.toBeNull();
+  });
+
+  it("moves the selection to a node when collapsing hides the selected descendant", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(a, "B");
+    startApp(container, root);
+
+    fireClick(nodeEl(container, b.id), 100, 100, 0);
+    fireClick(nodeEl(container, a.id).querySelector(".mm-collapse-toggle")!, 100, 100, 1000);
+    fireKey("Delete");
+
+    expect(findNode(root, a.id)).toBeNull();
+    expect(root.children).toHaveLength(0);
+  });
+
+  it("does not record an edit that changes nothing as an undo step", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("t");
+
+    fireClick(nodeEl(container, child.id), 100, 100, 2000);
+    fireClick(nodeEl(container, child.id), 100, 100, 2100);
+    commitEdit("Child");
+    fireKeyMeta("z");
+
+    expect(container.querySelector(".mm-status-badge")).toBeNull();
+  });
+
+  it("removes a just-added node when its edit is cancelled or left empty", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+
+    fireKey("Tab");
+    editInputKey("Escape");
+    expect(child.children).toHaveLength(0);
+
+    fireKey("Tab");
+    commitEdit("   ");
+    expect(child.children).toHaveLength(0);
+    expect(container.querySelector(".mm-selected")?.getAttribute("data-node-id")).toBe(child.id);
+  });
+
+  it("makes adding a node and typing its text one undo step", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("Tab");
+    commitEdit("Idea");
+    expect(child.children.map((c) => c.text)).toEqual(["Idea"]);
+
+    fireKeyMeta("z");
+    expect(container.querySelectorAll(".mm-leaf")).toHaveLength(1);
+  });
+
+  it("moves a group with a parent and its child by the drag distance only once", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(a, "B");
+    startApp(container, root);
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    const shiftDown = new PointerEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, shiftKey: true });
+    Object.defineProperty(shiftDown, "timeStamp", { value: 5000 });
+    nodeEl(container, b.id).dispatchEvent(shiftDown);
+    pointer(container, "pointerup", 100, 100);
+
+    pointer(nodeEl(container, a.id), "pointerdown", 100, 100);
+    pointer(container, "pointermove", 100, 200);
+    pointer(container, "pointerup", 100, 200);
+
+    expect(a.offset).toEqual({ dx: 0, dy: 100 });
+    expect(b.offset).toBeUndefined();
+  });
+
+  it("commits an open edit on ⌘S", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+    const input = container.querySelector<HTMLInputElement>("input.mm-edit-input")!;
+    input.value = "Saved text";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true, cancelable: true }));
+
+    expect(child.text).toBe("Saved text");
+  });
+
+  it("adds a sibling on Enter directly after the selected node", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(root, "B");
+    startApp(container, root);
+
+    fireClick(nodeEl(container, a.id), 100, 100, 0);
+    fireKey("Enter");
+    commitEdit("After A");
+
+    expect(root.children.map((c) => c.text)).toEqual(["A", "After A", "B"]);
+    expect(b.text).toBe("B");
+  });
+
+  it("goes on to the next new node on Enter (sibling) or Tab (child) while editing a new node", () => {
+    const root = createNode("Root");
+    startApp(container, root);
+
+    fireKey("Tab");
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "One";
+    editInputKey("Enter");
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Two";
+    editInputKey("Tab");
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Two child";
+    editInputKey("Enter");
+    editInputKey("Escape");
+
+    expect(root.children.map((c) => c.text)).toEqual(["One", "Two"]);
+    expect(root.children[1].children.map((c) => c.text)).toEqual(["Two child"]);
+    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+  });
+
+  it("only commits on Enter while editing an existing node", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "Renamed";
+    editInputKey("Enter");
+
+    expect(root.children.map((c) => c.text)).toEqual(["Renamed"]);
+    expect(container.querySelector("input.mm-edit-input")).toBeNull();
+  });
+
+  it("opens the selected node for editing with F2 or Space", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+
+    fireKey(" ");
+    expect(container.querySelector<HTMLInputElement>("input.mm-edit-input")?.value).toBe("Child");
+  });
+
+  it("toggles the keyboard shortcut list with ? and closes it with Escape", () => {
+    const { root } = buildTree();
+    startApp(container, root);
+    const panel = () => container.querySelector<HTMLElement>(".mm-help")!;
+    expect(panel().hidden).toBe(true);
+
+    fireKey("?");
+    expect(panel().hidden).toBe(false);
+    expect(panel().textContent).toContain("Add a child");
+
+    fireKey("Escape");
+    expect(panel().hidden).toBe(true);
+  });
 });
+

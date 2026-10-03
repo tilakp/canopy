@@ -73,7 +73,9 @@ export interface RenderState {
 }
 
 export interface RenderCallbacks {
-  onEditCommit(id: string, text: string): void;
+  // `next` says which key ended the edit: Enter asks for a sibling after
+  // it, Tab for a child. The app decides whether to act on it.
+  onEditCommit(id: string, text: string, next?: "sibling" | "child"): void;
   onEditCancel(): void;
   onNotesCommit(id: string, notes: string): void;
   onNotesCancel(): void;
@@ -351,6 +353,23 @@ function seedFrom(id: string): number {
   return Math.abs(hash) || 1;
 }
 
+// rough.js gives the same shape for the same seed and inputs, but computing
+// it is slow (65ms per render at 79 nodes, 1.3s at 1000), and every
+// select/drag/edit renders again. So each shape is generated once, keyed by
+// all of its inputs, and cloned on later renders.
+const sketchCache = new Map<string, SVGGElement>();
+const SKETCH_CACHE_LIMIT = 5000;
+
+function cachedSketch(key: string, draw: () => SVGGElement): SVGGElement {
+  let el = sketchCache.get(key);
+  if (!el) {
+    if (sketchCache.size >= SKETCH_CACHE_LIMIT) sketchCache.clear();
+    el = draw();
+    sketchCache.set(key, el);
+  }
+  return el.cloneNode(true) as SVGGElement;
+}
+
 interface BoxColors {
   fill: string;
   stroke: string;
@@ -413,7 +432,7 @@ function renderNode(
 
   if (rc) {
     const colors = boxColors(isRoot, isSelected, isDropTarget, layout.color);
-    const sketch = rc.rectangle(layout.x, boxTop, size.width, size.height, {
+    const options = {
       fill: colors.fill,
       fillStyle: "solid",
       stroke: colors.stroke,
@@ -422,7 +441,9 @@ function renderNode(
       bowing: 1.2,
       seed: seedFrom(node.id),
       ...(colors.dashed ? { strokeLineDash: [5, 3] } : {}),
-    });
+    };
+    const key = `rect|${layout.x}|${boxTop}|${size.width}|${size.height}|${JSON.stringify(options)}`;
+    const sketch = cachedSketch(key, () => rc.rectangle(layout.x, boxTop, size.width, size.height, options));
     sketch.classList.add(isRoot ? "mm-root-box" : "mm-node-box", "mm-sketchy-box");
     g.appendChild(sketch);
   } else {
@@ -591,13 +612,14 @@ function renderEdge(
         })();
 
   if (rc) {
-    const sketch = rc.path(d, {
+    const options = {
       stroke: to.color,
       strokeWidth: 2,
       roughness: 1.6,
       bowing: 1,
       seed: seedFrom(edge.fromId + edge.toId),
-    });
+    };
+    const sketch = cachedSketch(`path|${d}|${JSON.stringify(options)}`, () => rc.path(d, options));
     sketch.setAttribute("class", `mm-edge mm-sketchy-edge${isDimmed ? " mm-dimmed" : ""}`);
     sketch.setAttribute("opacity", "0.75");
     return sketch;
@@ -608,6 +630,13 @@ function renderEdge(
   path.setAttribute("class", `mm-edge${isDimmed ? " mm-dimmed" : ""}`);
   path.setAttribute("stroke", to.color);
   return path;
+}
+
+// Keys typed into an edit overlay stay there, so they don't also trigger
+// the app's shortcuts. ⌘S is the exception: it must reach the app's
+// window-level handler, which commits the open edit and then saves.
+function stopUnlessSave(e: KeyboardEvent): void {
+  if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s")) e.stopPropagation();
 }
 
 function renderEditOverlay(
@@ -639,13 +668,16 @@ function renderEditOverlay(
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-      commit();
+      // The commit re-renders, which removes this input; a blur from that
+      // removal must not commit a second time.
+      input.removeEventListener("blur", commit);
+      callbacks.onEditCommit(node.id, input.value, e.key === "Enter" ? "sibling" : "child");
     } else if (e.key === "Escape") {
       e.preventDefault();
       input.removeEventListener("blur", commit);
       callbacks.onEditCancel();
     }
-    e.stopPropagation();
+    stopUnlessSave(e);
   });
 
   container.appendChild(input);
@@ -682,7 +714,7 @@ function renderNotesOverlay(
       textarea.removeEventListener("blur", commit);
       callbacks.onNotesCancel();
     }
-    e.stopPropagation();
+    stopUnlessSave(e);
   });
 
   container.appendChild(textarea);
@@ -721,13 +753,14 @@ function renderInlineTextOverlay(
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
+      input.removeEventListener("blur", commit);
       commit();
     } else if (e.key === "Escape") {
       e.preventDefault();
       input.removeEventListener("blur", commit);
       onCancel();
     }
-    e.stopPropagation();
+    stopUnlessSave(e);
   });
 
   container.appendChild(input);

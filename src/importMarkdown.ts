@@ -24,8 +24,14 @@ export function fromMarkdown(text: string): MindMapNode {
     if (bulletMatch) {
       const depth = Math.floor(bulletMatch[1].length / 2) + 1;
       while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop();
-      const { text: bulletText, icon, link } = parseBullet(bulletMatch[2].trim());
+      // A task-list checkbox comes first, before the link check: in
+      // "[ ] [Docs](url)" the link regex would otherwise take "[ ] [Docs"
+      // as the label.
+      const checkbox = bulletMatch[2].trim().match(/^\[([ xX])\]\s+(.*)$/);
+      const content = checkbox ? checkbox[2] : bulletMatch[2].trim();
+      const { text: bulletText, icon, link } = parseBullet(content);
       const node = addChild(stack[stack.length - 1].node, bulletText);
+      if (checkbox) node.status = checkbox[1] === " " ? "todo" : "done";
       if (icon) node.icon = icon;
       if (link) node.link = link;
       stack.push({ node, depth });
@@ -35,9 +41,12 @@ export function fromMarkdown(text: string): MindMapNode {
 
     // An italic line right after a bullet is that node's notes — but only
     // if it doesn't already look like a '* item' bullet (no space right
-    // after the opening '*').
+    // after the opening '*'). Several italic lines are multi-line notes.
     const notesMatch = line.match(/^\s*\*(.+)\*\s*$/);
-    if (notesMatch && lastBullet) lastBullet.notes = notesMatch[1].trim();
+    if (notesMatch && lastBullet) {
+      const noteLine = notesMatch[1].trim();
+      lastBullet.notes = lastBullet.notes ? `${lastBullet.notes}\n${noteLine}` : noteLine;
+    }
   }
 
   return root;

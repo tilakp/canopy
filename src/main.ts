@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { addChild, createNode, type MindMapNode } from "./model";
 import { createWorkspace } from "./workspace";
 import { loadFromPath } from "./persistence";
 import { initTheme } from "./theme";
 import { initFontFamily } from "./fonts";
+import { confirmDiscard } from "./dialogs";
 
 function buildSampleTree() {
   const root = createNode("Canopy");
@@ -37,4 +39,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     const result = await loadFromPath(event.payload).catch(() => null);
     if (result) workspace.openInNewTab(result.root, result.path);
   }).catch(() => {});
+
+  // Closing the window with unsaved maps asks first. Like the listener
+  // above, this does nothing outside a real Tauri webview.
+  try {
+    await getCurrentWindow().onCloseRequested(async (event) => {
+      if (workspace.hasUnsavedChanges() && !(await confirmDiscard())) event.preventDefault();
+    });
+  } catch {
+    // Not running inside Tauri.
+  }
 });

@@ -1,9 +1,11 @@
 import {
   addChild,
   clearOffsets,
+  cloneTree,
   cycleStatus,
   findNode,
   findParent,
+  insertSiblingAfter,
   moveSibling,
   removeNode,
   reparentNode,
@@ -25,9 +27,11 @@ import { saveToFile, loadFromFile, loadFromPath } from "./persistence";
 import { openLink } from "./links";
 import { exportMap } from "./exportFile";
 import { createSearchBar } from "./search";
+import { createHelpPanel } from "./help";
 import { fromMarkdown } from "./importMarkdown";
 import { printMap } from "./printMap";
 import { addRecentFile } from "./recentFiles";
+import { confirmDiscard, showError } from "./dialogs";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 
@@ -71,6 +75,9 @@ export interface AppHandle {
   // keystroke (⌘S on a closed map still opens a save dialog) and keeps its
   // whole tree, undo history and detached DOM alive for the session.
   destroy(): void;
+  // True when the document has changes that are not saved to its file.
+  isDirty(): boolean;
+  getFilePath(): string | null;
 }
 
 export function startApp(
@@ -92,6 +99,10 @@ export function startApp(
     selectedIds = id ? new Set([id]) : new Set();
   }
   let editingId: string | null = null;
+  // A node that Tab/Enter/+ just added, open for its first edit. It is not
+  // in the undo history yet: the add and its first text become one undo
+  // step, and an edit that ends empty (or is cancelled) removes it again.
+  let newNodeId: string | null = null;
   let notesEditingId: string | null = null;
   let iconEditingId: string | null = null;
   let linkEditingId: string | null = null;
@@ -120,9 +131,23 @@ export function startApp(
   let searchMatchIds: string[] = [];
   let searchIndex = 0;
 
-  const history = createHistory(structuredClone(root));
+  // Dirty tracking compares snapshot identity, not content: the history
+  // hands back the same snapshot object on undo/redo, so undoing back to
+  // the saved state makes the document clean again at no cost.
+  let currentSnapshot = cloneTree(root);
+  // Null means "never saved anywhere", e.g. an imported Markdown outline.
+  let savedSnapshot: MindMapNode | null = currentSnapshot;
+  let history = createHistory(currentSnapshot);
   function commit(): void {
-    history.push(structuredClone(root));
+    currentSnapshot = cloneTree(root);
+    history.push(currentSnapshot);
+  }
+  function isDirty(): boolean {
+    return currentSnapshot !== savedSnapshot;
+  }
+  // Asked before anything replaces this document's contents.
+  async function canDiscardChanges(): Promise<boolean> {
+    return !isDirty() || (await confirmDiscard(root.text));
   }
 
   // Without a focused, focusable element, WKWebView's native tab-navigation
@@ -175,7 +200,10 @@ export function startApp(
     onImportMarkdown: () => void performImportMarkdown(),
     onPrint: () => void performPrint(),
     onOpenRecent: (path) => performOpenRecent(path),
+    onToggleHelp: () => help.toggle(),
   });
+
+  const help = createHelpPanel(container);
 
   const minimap = createMinimap(container, {
     // Re-centers the main camera on the world point the user clicked inside
@@ -277,21 +305,37 @@ export function startApp(
         dropTargetId,
       },
       {
-        onEditCommit(id, text) {
-          updateText(root, id, text.trim() || "Untitled");
-          commit();
+        onEditCommit(id, text, next) {
+          const isNew = id === newNodeId;
+          newNodeId = null;
           editingId = null;
+          if (isNew && !text.trim()) {
+            removeNewNode(id);
+          } else {
+            const before = findNode(root, id)?.text;
+            updateText(root, id, text.trim() || "Untitled");
+            if (isNew || findNode(root, id)?.text !== before) commit();
+            // Enter or Tab on a node that was just added goes on to the
+            // next one, so a list of ideas is one keystroke per idea.
+            // Ending an edit of an existing node stays a plain commit.
+            if (isNew && next) {
+              if (next === "child") addNodeAndEdit(findNode(root, id)!);
+              else addNodeAndEdit(siblingParentOf(id), id);
+              return;
+            }
+          }
           render();
           container.focus();
         },
         onEditCancel() {
-          editingId = null;
+          cancelTitleEdit();
           render();
           container.focus();
         },
         onNotesCommit(id, notes) {
+          const before = findNode(root, id)?.notes;
           setNotes(root, id, notes);
-          commit();
+          if (findNode(root, id)?.notes !== before) commit();
           notesEditingId = null;
           render();
           container.focus();
@@ -302,8 +346,9 @@ export function startApp(
           container.focus();
         },
         onIconCommit(id, icon) {
+          const before = findNode(root, id)?.icon;
           setIcon(root, id, icon);
-          commit();
+          if (findNode(root, id)?.icon !== before) commit();
           iconEditingId = null;
           render();
           container.focus();
@@ -314,8 +359,9 @@ export function startApp(
           container.focus();
         },
         onLinkCommit(id, link) {
+          const before = findNode(root, id)?.link;
           setLink(root, id, link);
-          commit();
+          if (findNode(root, id)?.link !== before) commit();
           linkEditingId = null;
           render();
           container.focus();
@@ -330,6 +376,9 @@ export function startApp(
     camera = result.camera;
     lastContentBBox = result.contentBBox;
     lastPositions = result.positions;
+    // During a node drag only the canvas needs to follow the pointer. The
+    // minimap, toolbar and tab strip catch up on the render at pointerup.
+    if (dragState?.type === "node") return;
     minimap.update({
       positions: lastPositions,
       contentBBox: lastContentBBox,
@@ -364,27 +413,81 @@ export function startApp(
     render();
   }
 
+  // Adds an empty node and opens it for editing. With `afterId`, the node
+  // goes directly after that sibling; otherwise it is the last child. A
+  // collapsed parent opens first, or the new node would have nowhere to
+  // show its edit input.
+  function addNodeAndEdit(parent: MindMapNode, afterId?: string): void {
+    parent.collapsed = false;
+    const node = afterId && afterId !== root.id ? insertSiblingAfter(root, afterId, "")! : addChild(parent, "");
+    newNodeId = node.id;
+    startEditing(node.id);
+  }
+
+  // Where Enter puts a new sibling: next to the node, or under the root
+  // when the node is the root (it has no siblings).
+  function siblingParentOf(id: string): MindMapNode {
+    return id === root.id ? root : (findParent(root, id) ?? root);
+  }
+
+  function removeNewNode(id: string): void {
+    const parent = findParent(root, id);
+    removeNode(root, id);
+    selectOnly(parent ? parent.id : null);
+  }
+
+  // Ends a title edit with no commit. A node added just for this edit goes
+  // away again, so a cancelled add leaves no empty box behind.
+  function cancelTitleEdit(): void {
+    if (newNodeId && newNodeId === editingId) removeNewNode(newNodeId);
+    newNodeId = null;
+    editingId = null;
+  }
+
+  function hasSelectedAncestor(id: string): boolean {
+    for (let p = findParent(root, id); p; p = findParent(root, p.id)) {
+      if (selectedIds.has(p.id)) return true;
+    }
+    return false;
+  }
+
   function loadRoot(newRoot: MindMapNode, path: string | null): void {
     root = newRoot;
     filePath = path;
     selectOnly(null);
     editingId = null;
+    newNodeId = null;
     focusId = null;
     camera = undefined;
     dragState = null;
-    history.push(structuredClone(root));
+    // A new history, not a push onto the old one: otherwise ⌘Z after an
+    // open brings back the previous document, and a ⌘S then writes it
+    // over the file that was just opened.
+    currentSnapshot = cloneTree(root);
+    savedSnapshot = path ? currentSnapshot : null;
+    history = createHistory(currentSnapshot);
     render();
   }
 
   async function performSave(): Promise<void> {
-    const savedPath = await saveToFile(root, filePath);
+    const snapshot = currentSnapshot;
+    let savedPath: string | null;
+    try {
+      savedPath = await saveToFile(root, filePath);
+    } catch (err) {
+      await showError(`Could not save the map: ${err}`);
+      return;
+    }
     if (savedPath) {
       filePath = savedPath;
+      savedSnapshot = snapshot;
       addRecentFile(savedPath);
+      onChange?.();
     }
   }
 
   async function performOpen(): Promise<void> {
+    if (!(await canDiscardChanges())) return;
     // A file that can't be read, or whose JSON isn't a mind map, must leave
     // the current document alone rather than half-replacing it.
     const result = await loadFromFile().catch(() => null);
@@ -399,6 +502,7 @@ export function startApp(
     // file read — same shape as performOpen(): a failure at any step must
     // leave the current document alone rather than half-replacing it, and
     // must not surface as an unhandled rejection.
+    if (!(await canDiscardChanges())) return;
     const path = await open({ multiple: false, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(
       () => null,
     );
@@ -411,6 +515,16 @@ export function startApp(
   }
 
   async function performOpenRecent(path: string): Promise<boolean> {
+    if (!(await canDiscardChanges())) return true;
+    // Imported Markdown files are in the recent list too, and they are not
+    // JSON, so they go through the importer again, not loadFromPath.
+    if (path.toLowerCase().endsWith(".md")) {
+      const importedRoot = await readTextFile(path).then(fromMarkdown).catch(() => null);
+      if (!importedRoot) return false;
+      loadRoot(importedRoot, null);
+      addRecentFile(path);
+      return true;
+    }
     const result = await loadFromPath(path).catch(() => null);
     if (!result) return false;
     loadRoot(result.root, result.path);
@@ -466,7 +580,8 @@ export function startApp(
   function performUndo(): void {
     const snapshot = history.undo();
     if (!snapshot) return;
-    root = structuredClone(snapshot);
+    currentSnapshot = snapshot;
+    root = cloneTree(snapshot);
     selectOnly(null);
     editingId = null;
     render();
@@ -475,7 +590,8 @@ export function startApp(
   function performRedo(): void {
     const snapshot = history.redo();
     if (!snapshot) return;
-    root = structuredClone(snapshot);
+    currentSnapshot = snapshot;
+    root = cloneTree(snapshot);
     selectOnly(null);
     editingId = null;
     render();
@@ -498,6 +614,8 @@ export function startApp(
     // Same reasoning: the minimap handles its own pointer events (click/drag
     // to navigate) and shouldn't also fall through to canvas pan/selection.
     if ((e.target as Element).closest(".mm-minimap")) return;
+    // The help panel closes on its own click; that click is not a canvas pan.
+    if ((e.target as Element).closest(".mm-help")) return;
     // Suppress the browser's default mousedown focus handling: without
     // this, when startEditing() below focuses a freshly-created <input>,
     // the browser's own default action (targeting the original, now
@@ -512,6 +630,13 @@ export function startApp(
       const nodeId = collapseToggle.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
       if (nodeId) {
         toggleCollapsed(root, nodeId);
+        // A selected node inside the subtree that just closed would stay
+        // the target of Delete, T, N, I and L while out of sight, so the
+        // selection moves up to the collapsed node.
+        const collapsed = findNode(root, nodeId)!;
+        if (collapsed.collapsed && [...selectedIds].some((id) => id !== nodeId && findNode(collapsed, id))) {
+          selectOnly(nodeId);
+        }
         commit();
         render();
       }
@@ -521,12 +646,7 @@ export function startApp(
     const addBtn = (e.target as Element).closest(".mm-add-btn");
     if (addBtn) {
       const parentId = addBtn.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      if (parentId) {
-        const parent = findNode(root, parentId)!;
-        const child = addChild(parent, "");
-        commit();
-        startEditing(child.id);
-      }
+      if (parentId) addNodeAndEdit(findNode(root, parentId)!);
       return;
     }
 
@@ -570,7 +690,10 @@ export function startApp(
 
       if (id !== root.id) {
         const groupDrag = selectedIds.has(id) && selectedIds.size > 1;
-        const idsToMove = groupDrag ? selectedIds : new Set([id]);
+        // A selected node under another selected node already moves with
+        // it (offsets apply to descendants), so moving it too would move it
+        // twice as far.
+        const idsToMove = groupDrag ? [...selectedIds].filter((nid) => !hasSelectedAncestor(nid)) : [id];
         const startOffsets = new Map<string, { dx: number; dy: number }>();
         for (const nid of idsToMove) {
           const n = findNode(root, nid);
@@ -591,6 +714,12 @@ export function startApp(
       // No active pointer with this id (e.g. a synthetic event) — harmless.
     }
   });
+
+  let pendingDragFrame: number | null = null;
+  function cancelDragFrame(): void {
+    if (pendingDragFrame !== null) cancelAnimationFrame(pendingDragFrame);
+    pendingDragFrame = null;
+  }
 
   container.addEventListener("pointermove", (e) => {
     if (!dragState) return;
@@ -614,8 +743,15 @@ export function startApp(
       // selected node onto it at once, which risks ambiguous nesting and
       // cycles (e.g. a selected node being an ancestor of the target), so
       // group drags just reposition instead.
-      dropTargetId = dragState.startOffsets.size === 1 ? findDropTargetId(e.clientX, e.clientY, dragState.id) : null;
-      render();
+      const singleDrag = dragState.startOffsets.size === 1 && dragState.startOffsets.has(dragState.id);
+      dropTargetId = singleDrag ? findDropTargetId(e.clientX, e.clientY, dragState.id) : null;
+      // Pointer events can come faster than the screen refreshes, and a
+      // full render takes ~27-41ms at 300 nodes, so renders are coalesced
+      // to at most one per animation frame.
+      pendingDragFrame ??= requestAnimationFrame(() => {
+        pendingDragFrame = null;
+        render();
+      });
     } else {
       camera = { ...dragState.startCamera, x: dragState.startCamera.x + dxPx, y: dragState.startCamera.y + dyPx };
       // Panning, like zooming, moves the camera and nothing else, so it gets
@@ -628,6 +764,7 @@ export function startApp(
 
   container.addEventListener("pointerup", () => {
     if (!dragState) return;
+    cancelDragFrame();
     // A node drag mutates the tree (offset, or a reparent), so it's one
     // undo step — but only if it actually moved. A plain click never
     // dispatches a pointermove, and recording it would bury real edits
@@ -649,10 +786,12 @@ export function startApp(
     render();
   });
   container.addEventListener("pointercancel", () => {
+    cancelDragFrame();
     pendingDeselectId = null;
     dragState = null;
     dragMoved = false;
     dropTargetId = null;
+    render();
   });
 
   // Pastes an image from the clipboard onto the selected node. Container-
@@ -825,7 +964,7 @@ export function startApp(
     // input itself never picked up focus for some reason.
     if (e.key === "Escape" && (editingId || notesEditingId || iconEditingId || linkEditingId)) {
       e.preventDefault();
-      editingId = null;
+      cancelTitleEdit();
       notesEditingId = null;
       iconEditingId = null;
       linkEditingId = null;
@@ -846,6 +985,8 @@ export function startApp(
     }
     if (cmd && e.key.toLowerCase() === "s") {
       e.preventDefault();
+      // An open edit input commits on blur, so the save includes it.
+      if (isEditingAnything) (document.activeElement as HTMLElement | null)?.blur();
       void performSave();
       return;
     }
@@ -871,6 +1012,17 @@ export function startApp(
     }
 
     if (isEditingAnything) return;
+
+    if (e.key === "?") {
+      e.preventDefault();
+      help.toggle();
+      return;
+    }
+    if (e.key === "Escape" && help.isOpen()) {
+      e.preventDefault();
+      help.close();
+      return;
+    }
 
     if (e.key === "n" || e.key === "i" || e.key === "l") {
       if (!selectedId) return;
@@ -923,22 +1075,21 @@ export function startApp(
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       const node = selectedId ? findNode(root, selectedId) : root;
-      if (node && node.children.length > 0) {
+      if (node && !node.collapsed && node.children.length > 0) {
         selectOnly(node.children[0].id);
         render();
       }
     } else if (e.key === "Tab") {
       e.preventDefault();
-      const parent = selectedId ? (findNode(root, selectedId) ?? root) : root;
-      const child = addChild(parent, "");
-      commit();
-      startEditing(child.id);
+      addNodeAndEdit(selectedId ? (findNode(root, selectedId) ?? root) : root);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const parent = !selectedId || selectedId === root.id ? root : (findParent(root, selectedId) ?? root);
-      const child = addChild(parent, "");
-      commit();
-      startEditing(child.id);
+      if (!selectedId) addNodeAndEdit(root);
+      else addNodeAndEdit(siblingParentOf(selectedId), selectedId);
+    } else if (e.key === "F2" || e.key === " ") {
+      if (!selectedId) return;
+      e.preventDefault();
+      startEditing(selectedId);
     } else if (e.key === "Delete" || e.key === "Backspace") {
       const targets = [...selectedIds].filter((id) => id !== root.id);
       if (targets.length === 0) return;
@@ -976,6 +1127,8 @@ export function startApp(
       window.removeEventListener("resize", onWindowResize);
       window.removeEventListener("keydown", onWindowKeyDown);
     },
+    isDirty,
+    getFilePath: () => filePath,
   };
 }
 

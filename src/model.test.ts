@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addChild, createNode, cycleStatus, moveSibling, reparentNode, setImage } from "./model";
+import { addChild, cloneTree, createNode, cycleStatus, insertSiblingAfter, moveSibling, reparentNode, setImage } from "./model";
 
 describe("moveSibling", () => {
   it("swaps a node with the next sibling", () => {
@@ -99,5 +99,38 @@ describe("setImage", () => {
 
     setImage(root, a.id, undefined);
     expect(a.image).toBeUndefined();
+  });
+});
+
+describe("insertSiblingAfter", () => {
+  it("inserts directly after the node, not at the end of the list", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(root, "B");
+
+    const added = insertSiblingAfter(root, a.id, "New")!;
+    expect(root.children).toEqual([a, added, b]);
+  });
+
+  it("returns null for the root", () => {
+    const root = createNode("Root");
+    expect(insertSiblingAfter(root, root.id, "New")).toBeNull();
+  });
+});
+
+describe("cloneTree", () => {
+  it("makes a deep copy that does not share nodes, children or offsets", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    a.offset = { dx: 1, dy: 2 };
+
+    const copy = cloneTree(root);
+    expect(copy).toEqual(root);
+    copy.children[0].text = "changed";
+    copy.children[0].offset!.dx = 99;
+    copy.children.push(createNode("extra"));
+    expect(a.text).toBe("A");
+    expect(a.offset).toEqual({ dx: 1, dy: 2 });
+    expect(root.children).toHaveLength(1);
   });
 });

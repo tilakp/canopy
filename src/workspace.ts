@@ -3,6 +3,7 @@ import { startApp, type AppHandle } from "./app";
 import { createTabStrip } from "./tabs";
 import { getTheme, setTheme } from "./theme";
 import { getFontId, setFontId } from "./fonts";
+import { confirmDiscard } from "./dialogs";
 
 // Multiple maps are multiple fully independent startApp instances, each
 // mounted in its own full-size container stacked in the same #app element.
@@ -13,11 +14,11 @@ interface Doc {
   id: string;
   containerEl: HTMLElement;
   handle: AppHandle;
-  filePath: string | null;
 }
 
 export interface Workspace {
   openInNewTab(root: MindMapNode, path: string | null): void;
+  hasUnsavedChanges(): boolean;
 }
 
 export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, initialPath: string | null): Workspace {
@@ -26,7 +27,7 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
 
   const tabStrip = createTabStrip(appEl, {
     onSwitch: (id) => switchTo(id),
-    onClose: (id) => closeDoc(id),
+    onClose: (id) => void closeDoc(id),
     onNew: (root) => addDoc(root, null, true),
     onToggleTheme: () => {
       setTheme(getTheme() === "dark" ? "light" : "dark");
@@ -48,7 +49,7 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
 
   function refreshTabs(): void {
     tabStrip.update(
-      docs.map((d) => ({ id: d.id, title: d.handle.getTitle() })),
+      docs.map((d) => ({ id: d.id, title: d.handle.getTitle(), dirty: d.handle.isDirty() })),
       activeId,
       getTheme() === "dark",
       getFontId(),
@@ -74,7 +75,7 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
     // measures the container's real size, which a display:none box (zero
     // size) would poison before switchTo ever gets a chance to fix it.
     const handle = startApp(containerEl, root, path, refreshTabs);
-    docs.push({ id, containerEl, handle, filePath: path });
+    docs.push({ id, containerEl, handle });
     if (makeActive) {
       switchTo(id);
     } else {
@@ -83,8 +84,12 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
     }
   }
 
-  function closeDoc(id: string): void {
-    const index = docs.findIndex((d) => d.id === id);
+  async function closeDoc(id: string): Promise<void> {
+    const doc = docs.find((d) => d.id === id);
+    if (!doc) return;
+    if (doc.handle.isDirty() && !(await confirmDiscard(doc.handle.getTitle()))) return;
+    // Look the index up again: other tabs can close while the dialog is up.
+    const index = docs.indexOf(doc);
     if (index === -1) return;
     // switchTo below only visits the docs still open, so a closed one is
     // never told it's inactive — it has to drop its own window listeners.
@@ -105,7 +110,12 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
 
   return {
     openInNewTab(root, path) {
-      addDoc(root, path, true);
+      // A file opened twice (e.g. double-clicked again in Finder) goes to
+      // its existing tab: two tabs on one path would overwrite each other.
+      const existing = path ? docs.find((d) => d.handle.getFilePath() === path) : undefined;
+      if (existing) switchTo(existing.id);
+      else addDoc(root, path, true);
     },
+    hasUnsavedChanges: () => docs.some((d) => d.handle.isDirty()),
   };
 }

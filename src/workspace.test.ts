@@ -108,4 +108,36 @@ describe("createWorkspace", () => {
     expect(docContainers()).toHaveLength(2);
     expect(tabEls()[1].querySelector(".mm-tab-title")!.textContent).toBe("Untitled");
   });
+
+  it("switches to the existing tab when the same file is opened again", () => {
+    const workspace = createWorkspace(container, createNode("First"), null);
+    workspace.openInNewTab(createNode("Doc"), "/maps/doc.canopy");
+    tabEls()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    workspace.openInNewTab(createNode("Doc"), "/maps/doc.canopy");
+
+    expect(docContainers()).toHaveLength(2);
+    expect(tabEls().map((t) => t.dataset.active)).toEqual(["false", "true"]);
+  });
+
+  it("asks before closing a tab with unsaved changes, and keeps it on cancel", async () => {
+    const workspace = createWorkspace(container, createNode("First"), null);
+    workspace.openInNewTab(createNode("Second"), null);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.value = "New idea";
+    container.querySelector<HTMLInputElement>("input.mm-edit-input")!.dispatchEvent(new Event("blur"));
+    expect(tabEls()[1].textContent).toContain("•");
+
+    const asked: string[] = [];
+    window.confirm = (text?: string) => {
+      asked.push(text ?? "");
+      return false;
+    };
+    tabEls()[1].querySelector<HTMLButtonElement>(".mm-tab-close")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(asked).toHaveLength(1);
+    expect(docContainers()).toHaveLength(2);
+  });
 });
+

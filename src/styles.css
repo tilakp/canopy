@@ -598,3 +598,53 @@ body {
   --mm-accent-soft: #2a2f52;
   --mm-hover-neutral: #32323c;
 }
+
+.mm-help {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  /* left: 50% would otherwise limit the shrink-to-fit width to half the
+     window, which wraps every description. */
+  width: max-content;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--mm-border, #ececf1);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgb(16 16 20 / 0.12);
+  color: var(--mm-text, #1f1f26);
+  font-size: 13px;
+  cursor: default;
+}
+
+/* The [hidden] attribute needs its own rule; see .mm-search[hidden]. */
+.mm-help[hidden] {
+  display: none;
+}
+
+.mm-help-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.mm-help dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 18px;
+  margin: 0;
+}
+
+.mm-help dt {
+  color: var(--mm-text-muted, #6b6d76);
+  white-space: nowrap;
+}
+
+.mm-help dd {
+  margin: 0;
+}

@@ -23,6 +23,7 @@ export interface ToolbarCallbacks {
   // Resolves to whether the file loaded successfully, so the recent-files
   // panel knows whether to prune the entry it was just clicked from.
   onOpenRecent(path: string): Promise<boolean>;
+  onToggleHelp(): void;
 }
 
 export interface ToolbarHandle {
@@ -56,6 +57,8 @@ const MINIMAP_ICON = `<svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5"
 const IMPORT_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M8 2 V10 M8 10 L5 7 M8 10 L11 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11 V13 A1 1 0 0 0 4 14 H12 A1 1 0 0 0 13 13 V11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const RECENT_ICON = `<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6"/><path d="M8 5 V8 L10.2 9.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PRINT_ICON = `<svg viewBox="0 0 16 16" fill="none"><path d="M4.5 6 V2.5 H11.5 V6" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><rect x="2.5" y="6" width="11" height="5.5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="9" width="7" height="4.5" stroke="currentColor" stroke-width="1.6"/></svg>`;
+
+const HELP_ICON = `<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6"/><path d="M6.2 6.3 A1.9 1.9 0 1 1 8.6 8.1 C8.1 8.3 8 8.7 8 9.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.9" fill="currentColor"/></svg>`;
 
 function makeIconButton(icon: string, title: string, onClick: () => void): HTMLButtonElement {
   const btn = document.createElement("button");
@@ -175,12 +178,14 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
   const zoomFitBtn = makeIconButton(ZOOM_FIT_ICON, "Zoom to fit (0)", callbacks.onZoomToFit);
   const focusBtn = makeIconButton(FOCUS_ICON, "Focus on selected branch (F)", callbacks.onToggleFocus);
   const minimapBtn = makeIconButton(MINIMAP_ICON, "Toggle minimap", callbacks.onToggleMinimap);
+  const helpBtn = makeIconButton(HELP_ICON, "Keyboard shortcuts (?)", callbacks.onToggleHelp);
   tidyGroup.appendChild(tidyBtn);
   tidyGroup.appendChild(zoomOutBtn);
   tidyGroup.appendChild(zoomInBtn);
   tidyGroup.appendChild(zoomFitBtn);
   tidyGroup.appendChild(focusBtn);
   tidyGroup.appendChild(minimapBtn);
+  tidyGroup.appendChild(helpBtn);
 
   function divider(): HTMLElement {
     const d = document.createElement("div");

@@ -30,4 +30,11 @@ describe("wrapText", () => {
     expect(lines).toEqual([""]);
     expect(width).toBe(0);
   });
+
+  it("returns the cached result for the same text, font and width", () => {
+    const first = wrapText("cached words here", "500 14px sans-serif", 60);
+    expect(wrapText("cached words here", "500 14px sans-serif", 60)).toBe(first);
+    expect(wrapText("cached words here", "500 14px serif", 60)).not.toBe(first);
+  });
 });
+

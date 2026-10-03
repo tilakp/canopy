@@ -76,4 +76,36 @@ describe("fromMarkdown", () => {
     expect(root.text).toBe("Untitled");
     expect(root.children.map((c) => c.text)).toEqual(["A", "B"]);
   });
+
+  it("round-trips checklist status, also on a linked node", () => {
+    const root = createNode("Root");
+    const done = addChild(root, "Task");
+    done.status = "done";
+    const todo = addChild(root, "Docs");
+    todo.status = "todo";
+    todo.link = "https://example.com";
+
+    const back = fromMarkdown(toMarkdown(root));
+    expect(back.children.map((c) => [c.text, c.status, c.link])).toEqual([
+      ["Task", "done", undefined],
+      ["Docs", "todo", "https://example.com"],
+    ]);
+  });
+
+  it("keeps an empty-text node and its children in place", () => {
+    const root = createNode("Root");
+    const empty = addChild(root, "");
+    addChild(empty, "Kid");
+
+    const back = fromMarkdown(toMarkdown(root));
+    expect(back.children).toHaveLength(1);
+    expect(back.children[0].children.map((c) => c.text)).toEqual(["Kid"]);
+  });
+
+  it("round-trips multi-line notes", () => {
+    const root = createNode("Root");
+    addChild(root, "A").notes = "line one\nline two";
+
+    expect(fromMarkdown(toMarkdown(root)).children[0].notes).toBe("line one\nline two");
+  });
 });

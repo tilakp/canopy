@@ -35,6 +35,26 @@ export function addChild(parent: MindMapNode, text: string): MindMapNode {
   return child;
 }
 
+// Adds a new node directly after `id` in its parent's children (not at the
+// end), so a sibling created from the middle of a list lands next to the
+// node it came from. Returns null for the root, which has no siblings.
+export function insertSiblingAfter(root: MindMapNode, id: string, text: string): MindMapNode | null {
+  const parent = findParent(root, id);
+  if (!parent) return null;
+  const sibling = createNode(text);
+  parent.children.splice(parent.children.findIndex((n) => n.id === id) + 1, 0, sibling);
+  return sibling;
+}
+
+// A deep copy for undo snapshots. Unlike structuredClone, this shares the
+// string values (JS strings are immutable), so a pasted image's data URL
+// is not copied again into every one of the history's snapshots.
+export function cloneTree(node: MindMapNode): MindMapNode {
+  const copy: MindMapNode = { ...node, children: node.children.map(cloneTree) };
+  if (node.offset) copy.offset = { ...node.offset };
+  return copy;
+}
+
 export function removeNode(root: MindMapNode, id: string): boolean {
   const index = root.children.findIndex((child) => child.id === id);
   if (index !== -1) {
