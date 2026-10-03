@@ -150,6 +150,10 @@ export function renderMindMap(
   state: RenderState,
   callbacks: RenderCallbacks,
 ): RenderResult {
+  // An editor that is open across a full render (a zoom while typing, for
+  // example) is rebuilt from the saved node, which would drop what was typed
+  // so far. Its draft, caret and focus are carried over to the new editor.
+  const draft = captureDraft(container);
   container.innerHTML = "";
 
   const svg = document.createElementNS(SVG_NS, "svg");
@@ -234,6 +238,7 @@ export function renderMindMap(
         container,
         layout,
         camera,
+        `icon:${node.id}`,
         "Icon",
         node.icon ?? "",
         "An emoji, e.g. 🚀",
@@ -252,6 +257,7 @@ export function renderMindMap(
         container,
         layout,
         camera,
+        `link:${node.id}`,
         "Link",
         node.link ?? "",
         "https://…",
@@ -262,7 +268,50 @@ export function renderMindMap(
     }
   }
 
+  if (draft) restoreDraft(container, draft);
   return { camera, positions, contentBBox };
+}
+
+interface EditorDraft {
+  key: string;
+  value: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+  focused: boolean;
+}
+
+function captureDraft(container: HTMLElement): EditorDraft | null {
+  const field = container.querySelector<HTMLInputElement | HTMLTextAreaElement>("[data-editor]");
+  if (!field) return null;
+  // Chrome fires blur on a focused element while the render removes it, and
+  // the element still counts as connected then. This mark tells the
+  // editor's blur handler that the blur is not "clicked away".
+  field.dataset.rebuilding = "true";
+  return {
+    key: field.dataset.editor!,
+    value: field.value,
+    selectionStart: field.selectionStart,
+    selectionEnd: field.selectionEnd,
+    focused: document.activeElement === field,
+  };
+}
+
+// False for a blur caused by a render removing the editor (see
+// captureDraft) or by Enter/Escape having already ended the edit.
+function isUserBlur(field: HTMLElement): boolean {
+  return field.isConnected && field.dataset.rebuilding !== "true";
+}
+
+function restoreDraft(container: HTMLElement, draft: EditorDraft): void {
+  const field = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-editor="${draft.key}"]`);
+  if (!field) return;
+  field.value = draft.value;
+  // Lets the editor resize itself to the restored text.
+  field.dispatchEvent(new Event("input"));
+  if (draft.focused) field.focus();
+  if (draft.selectionStart !== null && draft.selectionEnd !== null) {
+    field.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+  }
 }
 
 function cameraTransform(camera: Camera): string {
@@ -790,6 +839,7 @@ function renderEditOverlay(
 ): void {
   const input = document.createElement("textarea");
   input.className = `mm-edit-input${style === ROOT_STYLE ? " mm-edit-root" : ""}`;
+  input.dataset.editor = `title:${node.id}`;
   input.value = node.text;
   input.rows = 1;
   input.spellcheck = false;
@@ -822,17 +872,13 @@ function renderEditOverlay(
   fit();
 
   const commit = () => callbacks.onEditCommit(node.id, input.value);
-  input.addEventListener("blur", commit);
+  input.addEventListener("blur", () => isUserBlur(input) && commit());
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-      // The commit re-renders, which removes this input; a blur from that
-      // removal must not commit a second time.
-      input.removeEventListener("blur", commit);
       callbacks.onEditCommit(node.id, input.value, e.key === "Enter" ? "sibling" : "child");
     } else if (e.key === "Escape") {
       e.preventDefault();
-      input.removeEventListener("blur", commit);
       callbacks.onEditCancel();
     }
     stopUnlessSave(e);
@@ -897,6 +943,7 @@ function renderNotesOverlay(
   const panel = createFieldPanel(container, layout, camera, "Notes", "⌘↵ to save · Esc to cancel", 260, 150);
   const textarea = document.createElement("textarea");
   textarea.className = "mm-notes-input";
+  textarea.dataset.editor = `notes:${node.id}`;
   textarea.placeholder = "Add details, context or a reminder";
   textarea.value = node.notes ?? "";
   // Grows with its text, up to the max-height in styles.css.
@@ -907,15 +954,13 @@ function renderNotesOverlay(
   textarea.addEventListener("input", fit);
 
   const commit = () => callbacks.onNotesCommit(node.id, textarea.value);
-  textarea.addEventListener("blur", commit);
+  textarea.addEventListener("blur", () => isUserBlur(textarea) && commit());
   textarea.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      textarea.removeEventListener("blur", commit);
       commit();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      textarea.removeEventListener("blur", commit);
       callbacks.onNotesCancel();
     }
     stopUnlessSave(e);
@@ -933,6 +978,7 @@ function renderInlineTextOverlay(
   container: HTMLElement,
   layout: NodeLayout,
   camera: Camera,
+  editorKey: string,
   label: string,
   value: string,
   placeholder: string,
@@ -944,20 +990,19 @@ function renderInlineTextOverlay(
   const input = document.createElement("input");
   input.type = "text";
   input.className = "mm-inline-input";
+  input.dataset.editor = editorKey;
   input.placeholder = placeholder;
   input.value = value;
   input.spellcheck = false;
 
   const commit = () => onCommit(input.value);
-  input.addEventListener("blur", commit);
+  input.addEventListener("blur", () => isUserBlur(input) && commit());
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-      input.removeEventListener("blur", commit);
       commit();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      input.removeEventListener("blur", commit);
       onCancel();
     }
     stopUnlessSave(e);

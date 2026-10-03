@@ -271,6 +271,47 @@ describe("startApp interactions", () => {
     expect(overlay!.style.left).not.toBe(overlayLeft);
   });
 
+  it("keeps typed text, focus and caret in the editors while wheel-zooming", async () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const zoom = async () => {
+      container.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -100 }),
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    };
+
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+    const title = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
+    title.value = "Typed before zoom";
+    title.setSelectionRange(5, 5);
+    // Chrome fires blur on the focused editor while a render clears the
+    // canvas, with the editor still connected; jsdom does not, so the
+    // canvas's innerHTML setter stands in for that here.
+    const canvas = container.querySelector<HTMLElement>(".mm-canvas-container")!;
+    const innerHTML = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML")!;
+    Object.defineProperty(canvas, "innerHTML", {
+      get: () => innerHTML.get!.call(canvas),
+      set: (value: string) => {
+        canvas.querySelector("[data-editor]")?.dispatchEvent(new Event("blur"));
+        innerHTML.set!.call(canvas, value);
+      },
+    });
+    await zoom();
+    expect(child.text).toBe("Child");
+    const titleAfter = container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
+    expect(titleAfter.value).toBe("Typed before zoom");
+    expect(document.activeElement).toBe(titleAfter);
+    expect([titleAfter.selectionStart, titleAfter.selectionEnd]).toEqual([5, 5]);
+    fireKey("Escape");
+
+    fireKey("n");
+    container.querySelector<HTMLTextAreaElement>(".mm-notes-input")!.value = "Draft notes";
+    await zoom();
+    expect(container.querySelector<HTMLTextAreaElement>(".mm-notes-input")!.value).toBe("Draft notes");
+  });
+
   // Panning is a camera-only change too, so it takes the same one-attribute
   // fast path as zoom. pointermove fires once per frame during a drag, so a
   // full SVG rebuild per event caps the pan at however long a render takes.
