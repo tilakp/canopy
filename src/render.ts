@@ -550,14 +550,15 @@ function renderCollapseToggle(layout: NodeLayout, size: NodeSize, collapsed: boo
 
   const glyph = document.createElementNS(SVG_NS, "path");
   const s = 3.5;
-  // Collapsed: a right chevron (more hidden this way). Expanded: the
-  // mirrored left chevron (tuck back in) — deliberately not a "+" or "−",
-  // which would read as add/delete rather than expand/collapse.
+  // The usual disclosure convention (Finder, outline views): a right
+  // chevron when collapsed, a down chevron when expanded. A left chevron
+  // for "expanded" read as "go back", not "collapse". Deliberately not a
+  // "+" or "−", which would read as add/delete.
   glyph.setAttribute(
     "d",
     collapsed
       ? `M ${-s * 0.6} ${-s} L ${s * 0.7} 0 L ${-s * 0.6} ${s}`
-      : `M ${s * 0.6} ${-s} L ${-s * 0.7} 0 L ${s * 0.6} ${s}`,
+      : `M ${-s} ${-s * 0.6} L 0 ${s * 0.7} L ${s} ${-s * 0.6}`,
   );
   glyph.setAttribute("fill", "none");
   glyph.setAttribute("stroke-linejoin", "round");
