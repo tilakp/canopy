@@ -32,9 +32,13 @@ before the first launch:
 
 ## Features
 
-- Add a child (Tab) or a sibling (Enter) to the selected node.
-- Double-click a node, or hover it and click its **+** button, to edit
-  its text.
+- Add a child (Tab) or a sibling (Enter, placed right after the selected
+  node). While you type a new node, Enter goes on to the next sibling and
+  Tab to a child, so you can list ideas without leaving the keyboard.
+  Escape on an empty new node removes it.
+- Edit the selected node with F2 or Space, or double-click it. Hover a
+  node and click its **+** button to add a child.
+- Press `?` (or the toolbar's help button) to see every keyboard shortcut.
 - Delete the selected node (Delete/Backspace) along with its subtree.
 - Navigate with arrow keys: Up/Down between siblings, Left to the parent,
   Right to the first child. Reorder siblings with Alt+Up/Down.
@@ -64,7 +68,8 @@ before the first launch:
 - Undo/redo (⌘Z / ⌘⇧Z) for every change.
 - Save (⌘S) and open (⌘O) `.canopy` files, a plain JSON format, or reopen
   one from the toolbar's recent-files list. On macOS, double-clicking a
-  `.canopy` file opens it directly in Canopy.
+  `.canopy` file opens it directly in Canopy. A "•" on a tab marks unsaved
+  changes, and Canopy asks before you close or replace unsaved work.
 - Import a Markdown outline, or export the current map as PNG, SVG, or a
   Markdown outline, from the toolbar. Print directly from the toolbar too.
 
@@ -106,6 +111,8 @@ small starter tree so you can jump straight into your own map.
 | `src/fonts.ts` | The font picker. |
 | `src/search.ts` | The find bar (`⌘F`). |
 | `src/minimap.ts` | The navigable minimap. |
+| `src/help.ts` | The keyboard shortcut list (`?`). |
+| `src/dialogs.ts` | The unsaved-changes and save-error dialogs. |
 | `src-tauri/` | The Tauri (Rust) shell: window, file dialogs, file system access, and file-association handling. |
 
 See `CLAUDE.md` for the design decisions behind these files and a list of
