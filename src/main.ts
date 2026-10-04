@@ -6,7 +6,6 @@ import { createWorkspace } from "./workspace";
 import { loadFromPath } from "./persistence";
 import { initTheme } from "./theme";
 import { initFontFamily } from "./fonts";
-import { confirmDiscard } from "./dialogs";
 import { getRecentFiles, onRecentFilesChange, removeRecentFile } from "./recentFiles";
 
 function buildSampleTree() {
@@ -62,7 +61,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // nothing is worse than one that does not ask.
   listen("quit-requested", async () => {
     try {
-      if (workspace.hasUnsavedChanges() && !(await confirmDiscard())) return;
+      if (!(await workspace.confirmCloseAll())) return;
     } catch {
       // Fall through to quit.
     }
@@ -73,7 +72,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // above, this does nothing outside a real Tauri webview.
   try {
     await getCurrentWindow().onCloseRequested(async (event) => {
-      if (workspace.hasUnsavedChanges() && !(await confirmDiscard())) event.preventDefault();
+      if (!(await workspace.confirmCloseAll())) event.preventDefault();
     });
   } catch {
     // Not running inside Tauri.

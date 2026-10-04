@@ -74,7 +74,8 @@ before the first launch:
   format, from the toolbar or the menu bar's File menu, which also has New
   (⌘N) and Open Recent. On macOS, double-clicking a
   `.canopy` file opens it directly in Canopy. A "•" on a tab marks unsaved
-  changes, and Canopy asks before you close or replace unsaved work.
+  changes. Before you close or replace unsaved work, Canopy asks whether
+  to Save, Don't Save or Cancel.
 - Import a Markdown outline, or export the current map as PNG, SVG, or a
   Markdown outline, from the toolbar. Print directly from the toolbar too.
 

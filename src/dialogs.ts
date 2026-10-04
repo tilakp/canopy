@@ -1,18 +1,27 @@
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 
 // Native dialogs inside the real Tauri webview. In a plain browser (the
 // Chrome-driven dev server, tests) the plugin calls reject, so these fall
 // back to the browser's own confirm/console.
-// With no title, the question is about all open maps (closing the window).
-export async function confirmDiscard(title?: string): Promise<boolean> {
-  const text =
-    title === undefined
-      ? "Some open maps have unsaved changes. Discard them?"
-      : `"${title || "Untitled"}" has unsaved changes. Discard them?`;
+export type SaveChoice = "save" | "discard" | "cancel";
+
+// The standard macOS question before unsaved work goes away, with Save as
+// the default button.
+export async function askToSave(title: string): Promise<SaveChoice> {
+  const name = title || "Untitled";
   try {
-    return await ask(text, { title: "Unsaved changes", kind: "warning", okLabel: "Discard", cancelLabel: "Cancel" });
+    const result = await message(`Your changes will be lost if you don't save them.`, {
+      title: `Do you want to save the changes you made to "${name}"?`,
+      kind: "warning",
+      buttons: { yes: "Save", no: "Don't Save", cancel: "Cancel" },
+    });
+    // Custom buttons resolve to their label; default ones to Yes/No.
+    if (result === "Save" || result === "Yes") return "save";
+    if (result === "Don't Save" || result === "No") return "discard";
+    return "cancel";
   } catch {
-    return window.confirm(text);
+    // A plain browser has no three-button dialog: Discard or Cancel only.
+    return window.confirm(`"${name}" has unsaved changes. Discard them?`) ? "discard" : "cancel";
   }
 }
 

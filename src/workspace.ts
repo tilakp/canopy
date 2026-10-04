@@ -3,7 +3,6 @@ import { startApp, type AppHandle } from "./app";
 import { createTabStrip } from "./tabs";
 import { getTheme, setTheme } from "./theme";
 import { getFontId, setFontId } from "./fonts";
-import { confirmDiscard } from "./dialogs";
 
 // Multiple maps are multiple fully independent startApp instances, each
 // mounted in its own full-size container stacked in the same #app element.
@@ -18,7 +17,10 @@ interface Doc {
 
 export interface Workspace {
   openInNewTab(root: MindMapNode, path: string | null): void;
-  hasUnsavedChanges(): boolean;
+  // Before the window closes or the app quits: asks about each unsaved map
+  // in turn, showing its tab. Resolves to false as soon as one is
+  // cancelled or fails to save.
+  confirmCloseAll(): Promise<boolean>;
   // The map in the visible tab, for menu bar commands.
   activeMap(): AppHandle;
 }
@@ -89,7 +91,8 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
   async function closeDoc(id: string): Promise<void> {
     const doc = docs.find((d) => d.id === id);
     if (!doc) return;
-    if (doc.handle.isDirty() && !(await confirmDiscard(doc.handle.getTitle()))) return;
+    // A tab with no unsaved changes closes at once, with no await.
+    if (doc.handle.isDirty() && !(await doc.handle.confirmClose())) return;
     // Look the index up again: other tabs can close while the dialog is up.
     const index = docs.indexOf(doc);
     if (index === -1) return;
@@ -118,7 +121,13 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
       if (existing) switchTo(existing.id);
       else addDoc(root, path, true);
     },
-    hasUnsavedChanges: () => docs.some((d) => d.handle.isDirty()),
+    async confirmCloseAll() {
+      for (const doc of docs.filter((d) => d.handle.isDirty())) {
+        switchTo(doc.id);
+        if (!(await doc.handle.confirmClose())) return false;
+      }
+      return true;
+    },
     activeMap: () => docs.find((d) => d.id === activeId)!.handle,
   };
 }

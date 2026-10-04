@@ -39,7 +39,7 @@ import { createHelpPanel } from "./help";
 import { fromMarkdown } from "./importMarkdown";
 import { printMap } from "./printMap";
 import { addRecentFile } from "./recentFiles";
-import { confirmDiscard, showError } from "./dialogs";
+import { askToSave, showError } from "./dialogs";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 
@@ -93,6 +93,9 @@ export interface AppHandle {
   // Resolves to whether the file opened, so a failed path can leave the
   // recent list.
   openRecent(path: string): Promise<boolean>;
+  // Before this map closes: asks Save / Don't Save / Cancel if it has
+  // unsaved changes. Resolves to whether it may close.
+  confirmClose(): Promise<boolean>;
 }
 
 export function startApp(
@@ -160,9 +163,13 @@ export function startApp(
   function isDirty(): boolean {
     return currentSnapshot !== savedSnapshot;
   }
-  // Asked before anything replaces this document's contents.
+  // Asked before anything replaces or closes this document: Save (then go
+  // on only if the save worked), Don't Save, or Cancel.
   async function canDiscardChanges(): Promise<boolean> {
-    return !isDirty() || (await confirmDiscard(root.text));
+    if (!isDirty()) return true;
+    const choice = await askToSave(root.text);
+    if (choice === "save") return performSave();
+    return choice === "discard";
   }
 
   // Without a focused, focusable element, WKWebView's native tab-navigation
@@ -529,7 +536,9 @@ export function startApp(
 
   // Save writes to the open file, or asks for a path if there is none;
   // Save As always asks.
-  async function performSave(saveAs = false): Promise<void> {
+  // Resolves to whether the map was saved (false if the dialog was
+  // cancelled or the write failed).
+  async function performSave(saveAs = false): Promise<boolean> {
     commitOpenEdit();
     const snapshot = currentSnapshot;
     let savedPath: string | null;
@@ -537,14 +546,14 @@ export function startApp(
       savedPath = await saveToFile(root, saveAs ? null : filePath);
     } catch (err) {
       await showError(`Could not save the map: ${err}`);
-      return;
+      return false;
     }
-    if (savedPath) {
-      filePath = savedPath;
-      savedSnapshot = snapshot;
-      addRecentFile(savedPath);
-      onChange?.();
-    }
+    if (!savedPath) return false;
+    filePath = savedPath;
+    savedSnapshot = snapshot;
+    addRecentFile(savedPath);
+    onChange?.();
+    return true;
   }
 
   async function performOpen(): Promise<void> {
@@ -1213,6 +1222,7 @@ export function startApp(
     save: () => void performSave(),
     saveAs: () => void performSave(true),
     openRecent: (path) => performOpenRecent(path),
+    confirmClose: canDiscardChanges,
   };
 }
 
