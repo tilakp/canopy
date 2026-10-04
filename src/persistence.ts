@@ -77,5 +77,6 @@ function parseNode(value: unknown, seenIds: Set<string>, depth: number): MindMap
   // Only an embedded image. A remote URL would make opening the file send a
   // request to that server (a tracking pixel).
   if (typeof raw.image === "string" && raw.image.startsWith("data:image/")) node.image = raw.image;
+  if (typeof raw.width === "number" && raw.width > 0 && raw.width < 2000) node.width = raw.width;
   return node;
 }

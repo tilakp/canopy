@@ -12,7 +12,7 @@ export interface ToolbarCallbacks {
   onRedo(): void;
   onSave(): void;
   onOpen(): void;
-  onTidy(): void;
+  onArrange(): void;
   onZoomToFit(): void;
   onZoomIn(): void;
   onZoomOut(): void;
@@ -194,7 +194,7 @@ export function createToolbar(container: HTMLElement, callbacks: ToolbarCallback
 
   const tidyGroup = document.createElement("div");
   tidyGroup.className = "mm-toolbar-group";
-  const tidyBtn = makeIconButton(TIDY_ICON, "Tidy up layout", callbacks.onTidy);
+  const tidyBtn = makeIconButton(TIDY_ICON, "Arrange: line up columns and even out box sizes", callbacks.onArrange);
   const zoomOutBtn = makeIconButton(ZOOM_OUT_ICON, "Zoom out (⌘−)", callbacks.onZoomOut);
   const zoomInBtn = makeIconButton(ZOOM_IN_ICON, "Zoom in (⌘=)", callbacks.onZoomIn);
   const zoomFitBtn = makeIconButton(ZOOM_FIT_ICON, "Zoom to fit (0)", callbacks.onZoomToFit);

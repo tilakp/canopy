@@ -903,5 +903,23 @@ describe("startApp interactions", () => {
 
     expect(child.offset).toEqual({ dx: 5, dy: 5 });
   });
-});
 
+  it("arranges the map as one undo step, and adds none when already arranged", () => {
+    const root = createNode("Root");
+    const a = addChild(root, "A");
+    const b = addChild(root, "A longer label");
+    a.offset = { dx: 30, dy: 10 };
+    const app = startApp(container, root);
+    const arrange = container.querySelector<HTMLButtonElement>('.mm-toolbar [title^="Arrange"]')!;
+
+    arrange.click();
+    expect(a.offset).toBeUndefined();
+    expect(a.width).toBeDefined();
+    expect(a.width).toBe(b.width);
+
+    arrange.click();
+    fireKeyMeta("z");
+    expect(app.isDirty()).toBe(false);
+    expect(nodeEl(container, a.id).querySelector(".mm-node-box")!.getAttribute("width")).not.toBe(String(a.width));
+  });
+});

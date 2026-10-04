@@ -4,8 +4,8 @@ A simple, elegant mindmapping desktop app for thinking.
 
 Canopy draws your ideas as a left-to-right tree. The root sits on the
 left. Branches grow to the right. Each branch gets its own pastel color.
-You can add ideas fast, drag nodes to arrange them, and tidy the whole
-tree back into place with one click.
+You can add ideas fast, drag nodes where you want them, and arrange the
+whole tree into neat, even columns with one click.
 
 ## Download
 
@@ -43,9 +43,9 @@ before the first launch:
 - Navigate with arrow keys: Up/Down between siblings, Left to the parent,
   Right to the first child. Reorder siblings with Alt+Up/Down.
 - Drag a node to reposition it, or drop it onto another node to reparent
-  it there. Click **Tidy up** in the toolbar to clear all manual
-  positioning and snap back to the auto-computed layout, or **zoom to
-  fit** (toolbar button or `0`) to frame the whole tree.
+  it there. Click **Arrange** in the toolbar to undo all manual moves,
+  give every box in a column the same width and line the columns up, or
+  **zoom to fit** (toolbar button or `0`) to frame the whole tree.
 - Fold a branch with the **−** that appears when you point at a node with
   children, or press `.`. A folded branch shows how many ideas it hides;
   click that number (or press `→`) to open it again. Option-click folds or

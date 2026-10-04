@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addChild, createNode } from "./model";
-import { renderMindMap, computeFitCamera, type EdgeStyle } from "./render";
+import { renderMindMap, computeArrangedWidths, computeFitCamera, type EdgeStyle } from "./render";
 
 let container: HTMLElement;
 
@@ -164,5 +164,37 @@ describe("computeFitCamera", () => {
     addChild(withChild, "Idea");
     render(withChild);
     expect(container.querySelector(".mm-empty-hint")).toBeNull();
+  });
+
+  it("arranges one box width per depth: the widest natural box there", () => {
+    const root = createNode("Root");
+    const short = addChild(root, "A");
+    const long = addChild(root, "A much longer label");
+    const deep = addChild(short, "Deep");
+    const hidden = addChild(long, "Hidden but counted");
+    long.collapsed = true;
+
+    const widths = computeArrangedWidths(root);
+    expect(widths.has(root.id)).toBe(false);
+    expect(widths.get(short.id)).toBe(widths.get(long.id));
+    expect(widths.get(deep.id)).toBe(widths.get(hidden.id));
+
+    short.width = widths.get(short.id);
+    long.width = widths.get(long.id);
+    deep.width = widths.get(deep.id);
+    const { positions } = render(root);
+    expect(positions.get(short.id)!.width).toBe(positions.get(long.id)!.width);
+    expect(positions.get(short.id)!.x).toBe(positions.get(long.id)!.x);
+  });
+
+  it("wraps text inside a fixed box width", () => {
+    const root = createNode("Root");
+    const node = addChild(root, "one two three four five six");
+    const natural = render(root).positions.get(node.id)!;
+    node.width = 90;
+    const fixed = render(root).positions.get(node.id)!;
+
+    expect(fixed.width).toBe(90);
+    expect(fixed.height).toBeGreaterThan(natural.height);
   });
 });

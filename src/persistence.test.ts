@@ -65,5 +65,10 @@ describe("parseDocument", () => {
 
     expect(() => parseDocument(json)).toThrow(/nested more than 1000 levels/);
   });
-});
 
+  it("keeps a valid fixed box width and drops a bad one", () => {
+    expect(parseDocument(`{"id":"r","text":"R","width":180,"children":[]}`).width).toBe(180);
+    expect(parseDocument(`{"id":"r","text":"R","width":-5,"children":[]}`).width).toBeUndefined();
+    expect(parseDocument(`{"id":"r","text":"R","width":"wide","children":[]}`).width).toBeUndefined();
+  });
+});

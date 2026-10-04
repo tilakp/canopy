@@ -23,6 +23,9 @@ export interface MindMapNode {
   status?: "todo" | "done";
   // A pasted image, stored as a data URL, shown as a thumbnail in the box.
   image?: string;
+  // A fixed box width set by Arrange, so every box in a column has the same
+  // width; the text wraps inside it. Unset means the box fits its text.
+  width?: number;
 }
 
 export function createNode(text: string): MindMapNode {
@@ -168,6 +171,13 @@ export function reparentNode(root: MindMapNode, id: string, newParentId: string)
 export function clearOffsets(root: MindMapNode): void {
   root.offset = undefined;
   for (const child of root.children) clearOffsets(child);
+}
+
+// Sets each listed node's fixed box width, and clears it on every other
+// node (see Arrange in app.ts).
+export function setWidths(root: MindMapNode, widths: Map<string, number>): void {
+  root.width = widths.get(root.id);
+  for (const child of root.children) setWidths(child, widths);
 }
 
 // Swaps a node with its adjacent sibling (direction -1 = earlier, +1 =

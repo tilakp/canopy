@@ -125,23 +125,52 @@ function fontString(style: BoxStyle): string {
 // there's no separate DOM-measurement pass to go out of sync with.
 function buildVisuals(root: MindMapNode): Map<string, NodeVisual> {
   const visuals = new Map<string, NodeVisual>();
-  for (const node of iterateNodes(root)) {
-    const style = node.id === root.id ? ROOT_STYLE : LEAF_STYLE;
-    const displayText = (node.icon ? node.icon + " " : "") + (node.text || " ");
-    const wrapped = wrapText(displayText, fontString(style), style.maxTextWidth);
-    const leading = node.status ? STATUS_SLOT : 0;
-    const trailing = ((node.notes ? 1 : 0) + (node.link ? 1 : 0)) * META_ICON_SLOT;
-    const textWidth = wrapped.width + style.paddingX * 2 + leading + trailing;
-    const textHeight = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
-    const size: NodeSize = node.image
-      ? {
-          width: Math.max(textWidth, IMAGE_THUMB_SIZE + style.paddingX * 2),
-          height: textHeight + IMAGE_THUMB_SIZE + IMAGE_GAP,
-        }
-      : { width: textWidth, height: textHeight };
-    visuals.set(node.id, { wrapped, style, size, leading, trailing });
-  }
+  for (const node of iterateNodes(root)) visuals.set(node.id, nodeVisual(node, node.id === root.id));
   return visuals;
+}
+
+// The narrowest a fixed width may squeeze the text, so a box never becomes
+// a column of single letters.
+const MIN_WRAP_WIDTH = 40;
+
+function nodeVisual(node: MindMapNode, isRoot: boolean): NodeVisual {
+  const style = isRoot ? ROOT_STYLE : LEAF_STYLE;
+  const displayText = (node.icon ? node.icon + " " : "") + (node.text || " ");
+  const leading = node.status ? STATUS_SLOT : 0;
+  const trailing = ((node.notes ? 1 : 0) + (node.link ? 1 : 0)) * META_ICON_SLOT;
+  const chrome = style.paddingX * 2 + leading + trailing;
+  const fixedTextWidth = node.width ? Math.max(MIN_WRAP_WIDTH, node.width - chrome) : null;
+  const wrapped = wrapText(displayText, fontString(style), fixedTextWidth ?? style.maxTextWidth);
+  // A word longer than the fixed width still widens the box rather than
+  // spilling out of it.
+  const textWidth = Math.max(fixedTextWidth ?? 0, wrapped.width) + chrome;
+  const textHeight = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
+  const size: NodeSize = node.image
+    ? {
+        width: Math.max(textWidth, IMAGE_THUMB_SIZE + style.paddingX * 2),
+        height: textHeight + IMAGE_THUMB_SIZE + IMAGE_GAP,
+      }
+    : { width: textWidth, height: textHeight };
+  return { wrapped, style, size, leading, trailing };
+}
+
+// Arrange: one box width per depth, the widest natural box at that depth,
+// so the boxes in a column line up and the columns start at the same x.
+// Hidden (folded) nodes count too, so a branch opened later still fits.
+// The root keeps its natural size; it is a column of its own.
+export function computeArrangedWidths(root: MindMapNode): Map<string, number> {
+  const columnWidth: number[] = [];
+  const depthOf = new Map<string, number>();
+  const visit = (node: MindMapNode, depth: number) => {
+    if (depth > 0) {
+      const natural = nodeVisual({ ...node, width: undefined }, false).size.width;
+      columnWidth[depth] = Math.max(columnWidth[depth] ?? 0, natural);
+      depthOf.set(node.id, depth);
+    }
+    for (const child of node.children) visit(child, depth + 1);
+  };
+  visit(root, 0);
+  return new Map([...depthOf].map(([id, depth]) => [id, Math.ceil(columnWidth[depth])]));
 }
 
 export function renderMindMap(
@@ -218,7 +247,7 @@ export function renderMindMap(
     const visual = node && visuals.get(node.id);
     if (node && layout && visual) {
       const fill = node.id === root.id ? rootFill() : boxFill(layout.color);
-      renderEditOverlay(container, node, layout, visual.style, fill, !!state.sketchy, camera, callbacks);
+      renderEditOverlay(container, node, layout, visual, fill, !!state.sketchy, camera, callbacks);
     }
   }
 
@@ -831,12 +860,16 @@ function renderEditOverlay(
   container: HTMLElement,
   node: MindMapNode,
   layout: NodeLayout,
-  style: BoxStyle,
+  visual: NodeVisual,
   fill: string,
   sketchy: boolean,
   camera: Camera,
   callbacks: RenderCallbacks,
 ): void {
+  const { style } = visual;
+  // Badges are hidden while editing, so the text may use the full fixed
+  // box width (if the node has one) minus padding.
+  const fixedTextWidth = node.width ? Math.max(MIN_WRAP_WIDTH, node.width - style.paddingX * 2) : null;
   const input = document.createElement("textarea");
   input.className = `mm-edit-input${style === ROOT_STYLE ? " mm-edit-root" : ""}`;
   input.dataset.editor = `title:${node.id}`;
@@ -856,8 +889,8 @@ function renderEditOverlay(
   input.style.background = fill;
 
   const fit = () => {
-    const wrapped = wrapText(input.value || " ", fontString(style), style.maxTextWidth);
-    const width = Math.max(wrapped.width, MIN_EDIT_TEXT_WIDTH) + style.paddingX * 2;
+    const wrapped = wrapText(input.value || " ", fontString(style), fixedTextWidth ?? style.maxTextWidth);
+    const width = Math.max(wrapped.width, fixedTextWidth ?? MIN_EDIT_TEXT_WIDTH) + style.paddingX * 2;
     const height = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
     // +1px: the textarea wraps on its own, and a subpixel rounding
     // difference must not push the last word onto a new line.

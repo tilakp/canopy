@@ -15,10 +15,18 @@ import {
   setImage,
   setLink,
   setNotes,
+  setWidths,
   updateText,
   type MindMapNode,
 } from "./model";
-import { renderMindMap, computeFitCamera, applyCamera, type Camera, type EdgeStyle } from "./render";
+import {
+  renderMindMap,
+  computeArrangedWidths,
+  computeFitCamera,
+  applyCamera,
+  type Camera,
+  type EdgeStyle,
+} from "./render";
 import type { NodeLayout } from "./layout";
 import { createToolbar } from "./toolbar";
 import { createMinimap } from "./minimap";
@@ -184,10 +192,16 @@ export function startApp(
     onRedo: () => void performRedo(),
     onSave: () => void performSave(),
     onOpen: () => void performOpen(),
-    onTidy: () => {
+    // Arrange: undo manual drags, give every box in a column the same
+    // width (so the columns line up), then show the whole result.
+    onArrange: () => {
+      const before = JSON.stringify(root);
       clearOffsets(root);
-      commit();
+      setWidths(root, computeArrangedWidths(root));
+      // Arranging an already arranged map changes nothing: no undo step.
+      if (JSON.stringify(root) !== before) commit();
       render();
+      performZoomToFit();
     },
     onZoomToFit: () => performZoomToFit(),
     onZoomIn: () => performZoomBy(ZOOM_STEP),
