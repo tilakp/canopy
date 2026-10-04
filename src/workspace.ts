@@ -19,6 +19,8 @@ interface Doc {
 export interface Workspace {
   openInNewTab(root: MindMapNode, path: string | null): void;
   hasUnsavedChanges(): boolean;
+  // The map in the visible tab, for menu bar commands.
+  activeMap(): AppHandle;
 }
 
 export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, initialPath: string | null): Workspace {
@@ -117,5 +119,6 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
       else addDoc(root, path, true);
     },
     hasUnsavedChanges: () => docs.some((d) => d.handle.isDirty()),
+    activeMap: () => docs.find((d) => d.id === activeId)!.handle,
   };
 }

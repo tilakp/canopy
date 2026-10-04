@@ -24,7 +24,8 @@ const SHORTCUTS: [string, string][] = [
   ["⌘= / ⌘−", "Zoom in / out"],
   ["⌘F", "Find"],
   ["⌘Z / ⌘⇧Z", "Undo / redo"],
-  ["⌘S / ⌘O", "Save / open"],
+  ["⌘S / ⇧⌘S / ⌘O", "Save / Save As / Open"],
+  ["⌘N", "New map (menu bar)"],
   ["?", "Show or hide this list"],
 ];
 

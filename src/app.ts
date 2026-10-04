@@ -86,6 +86,13 @@ export interface AppHandle {
   // True when the document has changes that are not saved to its file.
   isDirty(): boolean;
   getFilePath(): string | null;
+  // File menu commands from the menu bar (see main.ts), run on this map.
+  open(): void;
+  save(): void;
+  saveAs(): void;
+  // Resolves to whether the file opened, so a failed path can leave the
+  // recent list.
+  openRecent(path: string): Promise<boolean>;
 }
 
 export function startApp(
@@ -512,11 +519,22 @@ export function startApp(
     render();
   }
 
-  async function performSave(): Promise<void> {
+  // Commits an open edit (its input commits on blur), so a save includes
+  // what is being typed.
+  function commitOpenEdit(): void {
+    if (editingId || notesEditingId || iconEditingId || linkEditingId) {
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+  }
+
+  // Save writes to the open file, or asks for a path if there is none;
+  // Save As always asks.
+  async function performSave(saveAs = false): Promise<void> {
+    commitOpenEdit();
     const snapshot = currentSnapshot;
     let savedPath: string | null;
     try {
-      savedPath = await saveToFile(root, filePath);
+      savedPath = await saveToFile(root, saveAs ? null : filePath);
     } catch (err) {
       await showError(`Could not save the map: ${err}`);
       return;
@@ -1044,9 +1062,7 @@ export function startApp(
     }
     if (cmd && e.key.toLowerCase() === "s") {
       e.preventDefault();
-      // An open edit input commits on blur, so the save includes it.
-      if (isEditingAnything) (document.activeElement as HTMLElement | null)?.blur();
-      void performSave();
+      void performSave(e.shiftKey);
       return;
     }
     if (cmd && e.key.toLowerCase() === "o") {
@@ -1193,6 +1209,10 @@ export function startApp(
     },
     isDirty,
     getFilePath: () => filePath,
+    open: () => void performOpen(),
+    save: () => void performSave(),
+    saveAs: () => void performSave(true),
+    openRecent: (path) => performOpenRecent(path),
   };
 }
 

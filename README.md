@@ -70,8 +70,9 @@ before the first launch:
 - Pick a font (including a hand-drawn one) and toggle dark mode from the
   tab strip.
 - Undo/redo (⌘Z / ⌘⇧Z) for every change.
-- Save (⌘S) and open (⌘O) `.canopy` files, a plain JSON format, or reopen
-  one from the toolbar's recent-files list. On macOS, double-clicking a
+- Save (⌘S), Save As (⇧⌘S) and open (⌘O) `.canopy` files, a plain JSON
+  format, from the toolbar or the menu bar's File menu, which also has New
+  (⌘N) and Open Recent. On macOS, double-clicking a
   `.canopy` file opens it directly in Canopy. A "•" on a tab marks unsaved
   changes, and Canopy asks before you close or replace unsaved work.
 - Import a Markdown outline, or export the current map as PNG, SVG, or a

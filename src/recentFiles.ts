@@ -10,12 +10,21 @@ export function getRecentFiles(): string[] {
   }
 }
 
+let changeListener: ((paths: string[]) => void) | null = null;
+
+// Called with the new list whenever it changes; main.ts uses it to keep
+// the menu bar's File › Open Recent in step.
+export function onRecentFilesChange(listener: (paths: string[]) => void): void {
+  changeListener = listener;
+}
+
 function saveRecentFiles(paths: string[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(paths));
   } catch {
     // Best-effort — a restricted context (e.g. private browsing) just won't persist it.
   }
+  changeListener?.(paths);
 }
 
 // Moves `path` to the front, de-duplicating, and caps the list at

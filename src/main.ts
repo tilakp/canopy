@@ -7,6 +7,7 @@ import { loadFromPath } from "./persistence";
 import { initTheme } from "./theme";
 import { initFontFamily } from "./fonts";
 import { confirmDiscard } from "./dialogs";
+import { getRecentFiles, onRecentFilesChange, removeRecentFile } from "./recentFiles";
 
 function buildSampleTree() {
   const root = createNode("Canopy");
@@ -39,6 +40,22 @@ window.addEventListener("DOMContentLoaded", async () => {
     const result = await loadFromPath(event.payload).catch(() => null);
     if (result) workspace.openInNewTab(result.root, result.path);
   }).catch(() => {});
+
+  // The menu bar's File menu (see install_menu in lib.rs). Like the other
+  // Tauri listeners, these do nothing outside a real Tauri webview.
+  listen<{ command: string; path: string | null }>("menu-command", async ({ payload }) => {
+    const map = workspace.activeMap();
+    if (payload.command === "new") workspace.openInNewTab(createNode("Untitled"), null);
+    else if (payload.command === "open") map.open();
+    else if (payload.command === "save") map.save();
+    else if (payload.command === "save-as") map.saveAs();
+    else if (payload.command === "open-recent" && payload.path) {
+      if (!(await map.openRecent(payload.path))) removeRecentFile(payload.path);
+    }
+  }).catch(() => {});
+  const syncRecentMenu = (paths: string[]) => void invoke("set_recent_files", { paths }).catch(() => {});
+  onRecentFilesChange(syncRecentMenu);
+  syncRecentMenu(getRecentFiles());
 
   // ⌘Q (the app menu's Quit item, see lib.rs) asks about unsaved maps,
   // then quits. If anything here fails, quit anyway: a Quit that does

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { getRecentFiles, addRecentFile, removeRecentFile } from "./recentFiles";
+import { getRecentFiles, addRecentFile, onRecentFilesChange, removeRecentFile } from "./recentFiles";
 
 beforeEach(() => {
   localStorage.clear();
@@ -50,4 +50,16 @@ describe("removeRecentFile", () => {
     removeRecentFile("/nope.canopy");
     expect(getRecentFiles()).toEqual(["/a.canopy"]);
   });
+
+  it("tells the change listener the new list", () => {
+    const seen: string[][] = [];
+    onRecentFilesChange((paths) => seen.push(paths));
+    addRecentFile("/a.canopy");
+    removeRecentFile("/a.canopy");
+    onRecentFilesChange(() => {});
+
+    expect(seen[seen.length - 2][0]).toBe("/a.canopy");
+    expect(seen[seen.length - 1]).not.toContain("/a.canopy");
+  });
 });
+
