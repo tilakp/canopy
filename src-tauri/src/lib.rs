@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -17,6 +17,30 @@ fn get_pending_file(state: tauri::State<PendingFile>) -> Option<String> {
     state.0.lock().unwrap().take()
 }
 
+// Called by the frontend once it has asked about unsaved maps (see the
+// "quit-requested" listener in main.ts).
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+// On macOS the default menu's Quit item (⌘Q) terminates the app at once;
+// tao handles only applicationWillTerminate, so nothing can stop it to ask
+// about unsaved changes. It is replaced by an item that asks the frontend
+// first.
+#[cfg(target_os = "macos")]
+fn install_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind};
+    let menu = Menu::default(app.handle())?;
+    if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+        let quit_index = app_menu.items()?.len().saturating_sub(1);
+        app_menu.remove_at(quit_index)?;
+        app_menu.append(&MenuItem::with_id(app, "quit", "Quit Canopy", true, Some("CmdOrCtrl+Q"))?)?;
+    }
+    app.set_menu(menu)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -24,7 +48,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(PendingFile(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![greet, get_pending_file])
+        .invoke_handler(tauri::generate_handler![greet, get_pending_file, quit_app])
+        .setup(|_app| {
+            #[cfg(target_os = "macos")]
+            install_menu(_app)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == "quit" {
+                let _ = app.emit("quit-requested", ());
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {

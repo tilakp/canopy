@@ -199,6 +199,10 @@ explicit `{"path": "$HOME/**"}` scope, `readTextFile` on that path silently
 fails and the app falls back to the default sample tree with no visible
 error.
 
+⌘Q asks about unsaved maps too, which needed a custom menu: tao (the macOS windowing layer under Tauri 2.11) handles only `applicationWillTerminate`, so the default Quit item terminates with no way to stop it. `lib.rs`'s `install_menu` replaces that item with one that emits `quit-requested`; `main.ts` asks, then calls the `quit_app` command. Verified in the built app with a clean map (quits at once); the prompt itself for an unsaved map is not yet verified in the built app, since that needs keyboard input, and OS-level keystrokes are unsafe here (they went to another app's window during one attempt).
+
+The app has a Content Security Policy (`tauri.conf.json`): only its own scripts, `data:`/`blob:` images (pasted images, PNG export), and Tauri IPC. `style-src` keeps `'unsafe-inline'` with `dangerousDisableAssetCspModification: ["style-src"]`, because the print iframe and exported SVGs carry inline `<style>` blocks, and Tauri's injected hashes would otherwise make browsers ignore `'unsafe-inline'`. `devCsp` adds Vite's HMR websocket. `withGlobalTauri` is off; nothing uses `window.__TAURI__`. Loading a file also rejects images that are not `data:image/` (a remote URL would be a tracking pixel), renames duplicate node ids, and rejects nesting deeper than 1000 levels.
+
 A signed/notarized release isn't set up — `.github/workflows/release.yml`
 builds unsigned installers for macOS/Windows/Linux on a `v*` tag push.
 

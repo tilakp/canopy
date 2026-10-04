@@ -891,4 +891,17 @@ describe("startApp interactions", () => {
     fireClick(container, 700, 500, 5000);
     expect(panel.hidden).toBe(true);
   });
+
+  it("puts a node back when the system cancels a drag", () => {
+    const { root, child } = buildTree();
+    child.offset = { dx: 5, dy: 5 };
+    startApp(container, root);
+
+    pointer(nodeEl(container, child.id), "pointerdown", 100, 100);
+    pointer(container, "pointermove", 140, 130);
+    pointer(container, "pointercancel", 140, 130);
+
+    expect(child.offset).toEqual({ dx: 5, dy: 5 });
+  });
 });
+

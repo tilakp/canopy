@@ -40,6 +40,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (result) workspace.openInNewTab(result.root, result.path);
   }).catch(() => {});
 
+  // ⌘Q (the app menu's Quit item, see lib.rs) asks about unsaved maps,
+  // then quits. If anything here fails, quit anyway: a Quit that does
+  // nothing is worse than one that does not ask.
+  listen("quit-requested", async () => {
+    try {
+      if (workspace.hasUnsavedChanges() && !(await confirmDiscard())) return;
+    } catch {
+      // Fall through to quit.
+    }
+    await invoke("quit_app");
+  }).catch(() => {});
+
   // Closing the window with unsaved maps asks first. Like the listener
   // above, this does nothing outside a real Tauri webview.
   try {

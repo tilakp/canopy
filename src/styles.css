@@ -738,7 +738,8 @@ body {
   border-radius: 7px;
   cursor: pointer;
   flex-shrink: 0;
-  max-width: 110px;
+  /* Room for the longest name ("System Default") in the system font. */
+  max-width: 132px;
 }
 
 .mm-font-select:hover {

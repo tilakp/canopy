@@ -12,9 +12,13 @@ export function fromMarkdown(text: string): MindMapNode {
   const titleMatch = i < lines.length ? lines[i].match(/^#\s+(.+)$/) : null;
   if (titleMatch) i++;
 
-  const root = createNode(titleMatch ? titleMatch[1].trim() : "Untitled");
+  const title = parseBullet(titleMatch ? titleMatch[1].trim() : "Untitled");
+  const root = createNode(title.text);
+  if (title.icon) root.icon = title.icon;
+  if (title.link) root.link = title.link;
   const stack: { node: MindMapNode; depth: number }[] = [{ node: root, depth: 0 }];
-  let lastBullet: MindMapNode | null = null;
+  // Italic lines right under the title are the root's notes.
+  let lastBullet: MindMapNode | null = root;
 
   for (; i < lines.length; i++) {
     const line = lines[i];
@@ -44,7 +48,7 @@ export function fromMarkdown(text: string): MindMapNode {
     // after the opening '*'). Several italic lines are multi-line notes.
     const notesMatch = line.match(/^\s*\*(.+)\*\s*$/);
     if (notesMatch && lastBullet) {
-      const noteLine = notesMatch[1].trim();
+      const noteLine = unescapeMarkdown(notesMatch[1].trim());
       lastBullet.notes = lastBullet.notes ? `${lastBullet.notes}\n${noteLine}` : noteLine;
     }
   }
@@ -55,13 +59,21 @@ export function fromMarkdown(text: string): MindMapNode {
 function parseBullet(content: string): { text: string; icon?: string; link?: string } {
   let label = content;
   let link: string | undefined;
-  const linkMatch = content.match(/^\[(.+)\]\((\S+)\)$/);
+  // The label may hold escaped brackets ("\[") but no bare "]", so text
+  // that was escaped on export is not taken for a link.
+  const linkMatch = content.match(/^\[((?:\\.|[^\\\]])+)\]\((\S+)\)$/);
   if (linkMatch) {
     label = linkMatch[1];
     link = linkMatch[2];
   }
+  label = unescapeMarkdown(label);
 
   const iconMatch = label.match(/^(\p{Extended_Pictographic}\uFE0F?)\s+(.*)$/u);
   if (iconMatch) return { text: iconMatch[2], icon: iconMatch[1], link };
   return { text: label, link };
+}
+
+// The inverse of exportMarkdown.ts's escapeMarkdown.
+function unescapeMarkdown(text: string): string {
+  return text.replace(/\\([\\[\]*])/g, "$1");
 }

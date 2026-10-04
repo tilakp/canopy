@@ -46,4 +46,24 @@ describe("parseDocument", () => {
     expect(parsed.status).toBeUndefined();
     expect(parsed.image).toBeUndefined();
   });
+
+  it("gives a repeated node id a new id, so each node can be found", () => {
+    const parsed = parseDocument(`{"id":"x","text":"R","children":[{"id":"x","text":"Dup","children":[]}]}`);
+
+    expect(parsed.id).toBe("x");
+    expect(parsed.children[0].id).not.toBe("x");
+  });
+
+  it("keeps only embedded images, not remote URLs", () => {
+    const remote = parseDocument(`{"id":"r","text":"R","image":"https://tracker.example/p.png","children":[]}`);
+    expect(remote.image).toBeUndefined();
+  });
+
+  it("rejects a file nested too deeply to render, with a clear message", () => {
+    let json = '{"id":"leaf","text":"t","children":[]}';
+    for (let i = 0; i < 1500; i++) json = `{"id":"n${i}","text":"t","children":[${json}]}`;
+
+    expect(() => parseDocument(json)).toThrow(/nested more than 1000 levels/);
+  });
 });
+

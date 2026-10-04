@@ -108,4 +108,34 @@ describe("fromMarkdown", () => {
 
     expect(fromMarkdown(toMarkdown(root)).children[0].notes).toBe("line one\nline two");
   });
+
+  it("keeps text that looks like Markdown syntax as text", () => {
+    const root = createNode("Root");
+    addChild(root, "[draft](v2)");
+    addChild(root, "a*b* and \\back");
+    addChild(root, "[ ] not a task").notes = "ends with a star*";
+
+    const back = fromMarkdown(toMarkdown(root));
+    expect(back.children.map((c) => c.text)).toEqual(["[draft](v2)", "a*b* and \\back", "[ ] not a task"]);
+    expect(back.children.map((c) => [c.link, c.status])).toEqual([[undefined, undefined], [undefined, undefined], [undefined, undefined]]);
+    expect(back.children[2].notes).toBe("ends with a star*");
+  });
+
+  it("round-trips the root's icon, link and notes", () => {
+    const root = createNode("Plan [v2]");
+    root.icon = "🌳";
+    root.link = "https://example.com";
+    root.notes = "First line\nSecond line";
+    addChild(root, "Child");
+
+    const back = fromMarkdown(toMarkdown(root));
+    expect([back.text, back.icon, back.link, back.notes]).toEqual([
+      "Plan [v2]",
+      "🌳",
+      "https://example.com",
+      "First line\nSecond line",
+    ]);
+    expect(back.children.map((c) => c.text)).toEqual(["Child"]);
+  });
 });
+

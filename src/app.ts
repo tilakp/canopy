@@ -824,6 +824,14 @@ export function startApp(
   });
   container.addEventListener("pointercancel", () => {
     cancelDragFrame();
+    // The system took the pointer away mid-drag (e.g. a gesture), so the
+    // move never finished: put the nodes back, with no undo step.
+    if (dragState?.type === "node" && dragMoved) {
+      for (const [nid, start] of dragState.startOffsets) {
+        const n = findNode(root, nid);
+        if (n) n.offset = start.dx === 0 && start.dy === 0 ? undefined : start;
+      }
+    }
     pendingDeselectId = null;
     dragState = null;
     dragMoved = false;
