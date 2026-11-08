@@ -25,10 +25,14 @@ import {
   computeFitCamera,
   applyCamera,
   type Camera,
-  type EdgeStyle,
 } from "./render";
 import type { NodeLayout } from "./layout";
-import { createToolbar } from "./toolbar";
+import { BRANCH_COLORS, createNodeToolbar, createZoomControls } from "./toolbar";
+import { createPalette, type Command } from "./palette";
+import { createContextMenu, type MenuEntry } from "./menu";
+import { getViewPrefs, setViewPref } from "./prefs";
+import { setTheme } from "./theme";
+import { FONT_OPTIONS, setFontId } from "./fonts";
 import { createMinimap } from "./minimap";
 import { createHistory } from "./history";
 import { saveToFile, loadFromFile, loadFromPath } from "./persistence";
@@ -93,6 +97,15 @@ export interface AppHandle {
   // Resolves to whether the file opened, so a failed path can leave the
   // recent list.
   openRecent(path: string): Promise<boolean>;
+  importMarkdown(): void;
+  exportFile(): void;
+  print(): void;
+  arrange(): void;
+  // Focus mode on the selected branch, on or off.
+  toggleFocus(): void;
+  openSearch(): void;
+  isFocused(): boolean;
+  canFocus(): boolean;
   // Before this map closes: asks Save / Don't Save / Cancel if it has
   // unsaved changes. Resolves to whether it may close.
   confirmClose(): Promise<boolean>;
@@ -124,8 +137,6 @@ export function startApp(
   let notesEditingId: string | null = null;
   let iconEditingId: string | null = null;
   let linkEditingId: string | null = null;
-  let edgeStyle: EdgeStyle = "curved";
-  let sketchy = false;
   let focusId: string | null = null;
   function toggleFocus(): void {
     if (!selectedId || selectedId === root.id) return;
@@ -144,7 +155,9 @@ export function startApp(
   let lastContentBBox = new DOMRect();
   let lastPositions = new Map<string, NodeLayout>();
   let dropTargetId: string | null = null;
-  let minimapVisible = true;
+  // The node toolbar shows for a selection made with the pointer, and
+  // hides again on keyboard work, where it would only cover the map.
+  let nodeToolbarWanted = false;
   let searchQuery = "";
   let searchMatchIds: string[] = [];
   let searchIndex = 0;
@@ -185,50 +198,229 @@ export function startApp(
   canvasEl.className = "mm-canvas-container";
   container.appendChild(canvasEl);
 
-  const toolbar = createToolbar(container, {
-    onPickColor(color) {
-      const targets = [...selectedIds].filter((id) => id !== root.id);
-      if (targets.length === 0) return;
-      for (const id of targets) setColor(root, id, color);
+  function pickColor(color: string): void {
+    const targets = [...selectedIds].filter((id) => id !== root.id);
+    if (targets.length === 0) return;
+    for (const id of targets) setColor(root, id, color);
+    commit();
+    render();
+  }
+
+  // Arrange: undo manual drags, give every box in a column the same
+  // width (so the columns line up), then show the whole result.
+  function arrange(): void {
+    const before = JSON.stringify(root);
+    clearOffsets(root);
+    setWidths(root, computeArrangedWidths(root));
+    // Arranging an already arranged map changes nothing: no undo step.
+    if (JSON.stringify(root) !== before) commit();
+    render();
+    performZoomToFit();
+  }
+
+  // The node actions, shared by the keyboard, the node toolbar, the
+  // right-click menu and the command palette.
+  function openFieldEditor(field: "notes" | "icon" | "link"): void {
+    if (!selectedId) return;
+    if (field === "notes") notesEditingId = selectedId;
+    else if (field === "icon") iconEditingId = selectedId;
+    else linkEditingId = selectedId;
+    render();
+  }
+
+  function cycleSelectedStatus(): void {
+    if (!selectedId) return;
+    cycleStatus(root, selectedId);
+    commit();
+    render();
+  }
+
+  function addChildToSelection(): void {
+    addNodeAndEdit(selectedId ? (findNode(root, selectedId) ?? root) : root);
+  }
+
+  function addSiblingToSelection(): void {
+    if (!selectedId) addNodeAndEdit(root);
+    else addNodeAndEdit(siblingParentOf(selectedId), selectedId);
+  }
+
+  function deleteSelection(): void {
+    const targets = [...selectedIds].filter((id) => id !== root.id);
+    if (targets.length === 0) return;
+    if (targets.length === 1) {
+      const parent = findParent(root, targets[0]);
+      removeNode(root, targets[0]);
       commit();
-      render();
-    },
-    onPickEdgeStyle(style) {
-      edgeStyle = style;
-      render();
-    },
-    onToggleSketchy() {
-      sketchy = !sketchy;
-      render();
-    },
-    onToggleFocus: () => toggleFocus(),
-    onUndo: () => void performUndo(),
-    onRedo: () => void performRedo(),
-    onSave: () => void performSave(),
-    onOpen: () => void performOpen(),
-    // Arrange: undo manual drags, give every box in a column the same
-    // width (so the columns line up), then show the whole result.
-    onArrange: () => {
-      const before = JSON.stringify(root);
-      clearOffsets(root);
-      setWidths(root, computeArrangedWidths(root));
-      // Arranging an already arranged map changes nothing: no undo step.
-      if (JSON.stringify(root) !== before) commit();
-      render();
-      performZoomToFit();
-    },
-    onZoomToFit: () => performZoomToFit(),
+      selectOnly(parent ? parent.id : null);
+    } else {
+      // Deleting an ancestor also removes its selected descendants, so a
+      // later removeNode() call for one of those is a safe no-op.
+      for (const id of targets) removeNode(root, id);
+      commit();
+      selectOnly(null);
+    }
+    render();
+  }
+
+  function selectionColor(): string | null {
+    const colors = [...selectedIds].filter((id) => id !== root.id).map((id) => lastPositions.get(id)?.color ?? null);
+    // A mixed selection has no one color, like a bold button that goes
+    // blank over a mixed-weight range in a word processor.
+    return colors.length > 0 && colors.every((c) => c === colors[0]) ? colors[0] : null;
+  }
+
+  const STATUS_LABELS = { none: "Mark as to do", todo: "Mark as done", done: "Clear status" };
+
+  function nodeMenuEntries(): MenuEntry[] {
+    const node = selectedId ? findNode(root, selectedId) : null;
+    if (!node) return canvasMenuEntries();
+    const isRoot = node.id === root.id;
+    const entries: MenuEntry[] = [
+      { label: "Add child", shortcut: "Tab", run: addChildToSelection },
+      { label: "Add sibling", shortcut: "↩", run: addSiblingToSelection, disabled: isRoot },
+      { label: "Edit text", shortcut: "F2", run: () => startEditing(node.id) },
+      "separator",
+      { label: "Notes", shortcut: "N", run: () => openFieldEditor("notes") },
+      { label: "Link", shortcut: "L", run: () => openFieldEditor("link") },
+      { label: "Icon", shortcut: "I", run: () => openFieldEditor("icon") },
+      { label: STATUS_LABELS[node.status ?? "none"], shortcut: "T", run: cycleSelectedStatus },
+    ];
+    if (!isRoot) entries.push("separator", { swatches: BRANCH_COLORS, active: selectionColor(), onPick: pickColor });
+    entries.push("separator");
+    if (node.children.length > 0) {
+      entries.push({ label: node.collapsed ? "Open branch" : "Fold branch", shortcut: ".", run: () => toggleFold(node.id) });
+    }
+    if (!isRoot) {
+      entries.push({ label: focusId === node.id ? "Exit focus" : "Focus on branch", shortcut: "F", run: toggleFocus });
+      entries.push("separator", { label: "Delete", shortcut: "⌫", run: deleteSelection, danger: true });
+    }
+    return entries;
+  }
+
+  function canvasMenuEntries(): MenuEntry[] {
+    return [
+      { label: "Add idea", shortcut: "Tab", run: () => addNodeAndEdit(root) },
+      "separator",
+      { label: "Undo", shortcut: "⌘Z", run: performUndo, disabled: !history.canUndo() },
+      { label: "Redo", shortcut: "⇧⌘Z", run: performRedo, disabled: !history.canRedo() },
+      "separator",
+      { label: "Arrange", run: arrange },
+      { label: "Zoom to fit", shortcut: "0", run: performZoomToFit },
+      { label: "Commands…", shortcut: "⌘K", run: () => palette.open() },
+    ];
+  }
+
+  function paletteCommands(): Command[] {
+    const commands: Command[] = [];
+    const node = selectedId ? findNode(root, selectedId) : null;
+    if (node) {
+      const isRoot = node.id === root.id;
+      const add = (label: string, shortcut: string | undefined, run: () => void) =>
+        commands.push({ group: "Selected node", label, shortcut, run });
+      add("Add child", "Tab", addChildToSelection);
+      if (!isRoot) add("Add sibling", "↩", addSiblingToSelection);
+      add("Edit text", "F2", () => startEditing(node.id));
+      add("Edit notes", "N", () => openFieldEditor("notes"));
+      add("Edit link", "L", () => openFieldEditor("link"));
+      add("Edit icon", "I", () => openFieldEditor("icon"));
+      add(STATUS_LABELS[node.status ?? "none"], "T", cycleSelectedStatus);
+      if (node.children.length > 0) add(node.collapsed ? "Open branch" : "Fold branch", ".", () => toggleFold(node.id));
+      if (!isRoot) {
+        add(focusId === node.id ? "Exit focus" : "Focus on branch", "F", toggleFocus);
+        add("Delete", "⌫", deleteSelection);
+      }
+    }
+    const map = (label: string, shortcut: string | undefined, run: () => void) =>
+      commands.push({ group: "Map", label, shortcut, run });
+    if (history.canUndo()) map("Undo", "⌘Z", performUndo);
+    if (history.canRedo()) map("Redo", "⇧⌘Z", performRedo);
+    map("Arrange", undefined, arrange);
+    map("Find", "⌘F", () => searchBar.open());
+    map("Zoom to fit", "0", performZoomToFit);
+    map("Zoom in", "⌘=", () => performZoomBy(ZOOM_STEP));
+    map("Zoom out", "⌘−", () => performZoomBy(1 / ZOOM_STEP));
+    const file = (label: string, shortcut: string | undefined, run: () => void) =>
+      commands.push({ group: "File", label, shortcut, run });
+    file("Open…", "⌘O", () => void performOpen());
+    file("Save", "⌘S", () => void performSave());
+    file("Save As…", "⇧⌘S", () => void performSave(true));
+    file("Import Markdown…", undefined, () => void performImportMarkdown());
+    file("Export…", undefined, () => void performExport());
+    file("Print…", undefined, () => void performPrint());
+    const prefs = getViewPrefs();
+    const view = (label: string, run: () => void) => commands.push({ group: "View", label, run });
+    view("Appearance: System", () => setTheme("system"));
+    view("Appearance: Light", () => setTheme("light"));
+    view("Appearance: Dark", () => setTheme("dark"));
+    view(prefs.edgeStyle === "curved" ? "Lines: Elbow" : "Lines: Curved", () =>
+      setViewPref("edgeStyle", prefs.edgeStyle === "curved" ? "straight" : "curved"),
+    );
+    view(prefs.sketchy ? "Turn off hand-drawn style" : "Turn on hand-drawn style", () => setViewPref("sketchy", !prefs.sketchy));
+    view(prefs.grid ? "Hide dot grid" : "Show dot grid", () => setViewPref("grid", !prefs.grid));
+    view(prefs.minimap ? "Hide minimap" : "Show minimap", () => setViewPref("minimap", !prefs.minimap));
+    for (const font of FONT_OPTIONS) view(`Font: ${font.id === "system" ? "System" : font.label}`, () => setFontId(font.id));
+    commands.push({ group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => help.toggle() });
+    return commands;
+  }
+
+  const zoomControls = createZoomControls(container, {
     onZoomIn: () => performZoomBy(ZOOM_STEP),
     onZoomOut: () => performZoomBy(1 / ZOOM_STEP),
-    onExport: () => void performExport(),
-    onToggleMinimap: () => {
-      minimapVisible = !minimapVisible;
-      render();
-    },
-    onImportMarkdown: () => void performImportMarkdown(),
-    onPrint: () => void performPrint(),
-    onOpenRecent: (path) => performOpenRecent(path),
+    onZoomToFit: () => performZoomToFit(),
     onToggleHelp: () => help.toggle(),
+  });
+
+  const nodeToolbar = createNodeToolbar(container, {
+    onPickColor: pickColor,
+    onAddChild: addChildToSelection,
+    onNotes: () => openFieldEditor("notes"),
+    onLink: () => openFieldEditor("link"),
+    onIcon: () => openFieldEditor("icon"),
+    onStatus: cycleSelectedStatus,
+    onMore: (anchor) => contextMenu.show(anchor.left, anchor.bottom + 6, nodeMenuEntries()),
+  });
+
+  const contextMenu = createContextMenu(container);
+  const palette = createPalette(container, paletteCommands, () => container.focus());
+
+  // The node toolbar and the zoom level follow the camera, so they update
+  // after a render and after a camera-only move (pan, pinch).
+  function updateFloatingControls(): void {
+    zoomControls.update(camera?.scale ?? 1);
+    const layout = selectedId ? lastPositions.get(selectedId) : undefined;
+    const isEditing = editingId || notesEditingId || iconEditingId || linkEditingId;
+    if (!camera || !layout || !nodeToolbarWanted || isEditing || dragState) {
+      nodeToolbar.update(null);
+      return;
+    }
+    const s = camera.scale;
+    nodeToolbar.update({
+      left: camera.x + layout.x * s,
+      right: camera.x + (layout.x + layout.width) * s,
+      top: camera.y + (layout.y - layout.height / 2) * s,
+      bottom: camera.y + (layout.y + layout.height / 2) * s,
+      color: selectionColor(),
+      canColor: [...selectedIds].some((id) => id !== root.id),
+      // A folded node has its count pill there, so only a node with no
+      // children at all has the room.
+      roomRight: findNode(root, selectedId!)?.children.length === 0,
+    });
+  }
+
+  container.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (editingId || notesEditingId || iconEditingId || linkEditingId) return;
+    const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
+    if (nodeEl) {
+      const id = nodeEl.dataset.nodeId!;
+      if (!selectedIds.has(id)) selectOnly(id);
+      else selectedId = id;
+      nodeToolbarWanted = false;
+      render();
+      contextMenu.show(e.clientX, e.clientY, nodeMenuEntries());
+    } else {
+      contextMenu.show(e.clientX, e.clientY, canvasMenuEntries());
+    }
   });
 
   const help = createHelpPanel(container);
@@ -321,6 +513,8 @@ export function startApp(
     // A focused node removed by an edit/undo would otherwise leave every
     // remaining node dimmed (computeFocusSet finds nothing to keep lit).
     if (focusId && !findNode(root, focusId)) focusId = null;
+    const prefs = getViewPrefs();
+    canvasEl.classList.toggle("mm-grid", prefs.grid);
     const result = renderMindMap(
       canvasEl,
       root,
@@ -330,10 +524,13 @@ export function startApp(
         notesEditingId,
         iconEditingId,
         linkEditingId,
-        edgeStyle,
-        sketchy,
+        edgeStyle: prefs.edgeStyle,
+        sketchy: prefs.sketchy,
         focusId,
         camera,
+        // Nodes slide to their new places after a change, but not while a
+        // drag moves them under the pointer.
+        animate: dragState?.type !== "node",
         dropTargetId,
         revealId,
         popId,
@@ -414,31 +611,18 @@ export function startApp(
     lastPositions = result.positions;
     // During a node drag only the canvas needs to follow the pointer. The
     // minimap, toolbar and tab strip catch up on the render at pointerup.
-    if (dragState?.type === "node") return;
+    if (dragState?.type === "node") {
+      nodeToolbar.update(null);
+      return;
+    }
     minimap.update({
       positions: lastPositions,
       contentBBox: lastContentBBox,
       camera,
       viewportSize: container.getBoundingClientRect(),
-      visible: minimapVisible,
+      visible: prefs.minimap,
     });
-
-    const targets = [...selectedIds].filter((id) => id !== root.id);
-    const targetColors = targets.map((id) => result.positions.get(id)?.color ?? null);
-    // Only show a swatch as "active" when every selected node shares that
-    // color — a mixed multi-selection shows no active swatch, same idea as
-    // a word processor's bold button going blank over a mixed-weight range.
-    const activeColor = targetColors.length > 0 && targetColors.every((c) => c === targetColors[0]) ? targetColors[0] : null;
-    toolbar.update({
-      hasSelection: targets.length > 0,
-      activeColor,
-      edgeStyle,
-      sketchy,
-      focused: focusId !== null,
-      minimapVisible,
-      canUndo: history.canUndo(),
-      canRedo: history.canRedo(),
-    });
+    updateFloatingControls();
     searchBar.update({ query: searchQuery, matchCount: searchMatchIds.length, currentIndex: searchIndex });
     onChange?.();
   }
@@ -669,6 +853,11 @@ export function startApp(
 
   container.addEventListener("pointerdown", (e) => {
     if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+    // A right-click (or Control-click) opens the context menu instead; see
+    // the contextmenu listener.
+    if (e.button === 2 || e.ctrlKey) return;
+    // Menus, popovers and the command palette handle their own clicks.
+    if ((e.target as Element).closest(".mm-popover, .mm-palette-backdrop")) return;
 
     // A click on an editor panel's label must not end the edit: no focus
     // change (preventDefault), and none of the canvas handling below.
@@ -687,7 +876,13 @@ export function startApp(
     // Let toolbar buttons behave like normal buttons — don't preventDefault
     // (which would suppress the click event they rely on) or treat this as
     // a canvas pan.
-    if ((e.target as Element).closest(".mm-toolbar")) return;
+    // No preventDefault for the color input, which needs its own click,
+    // but buttons must not take keyboard focus from the map: Tab, Enter and
+    // the other shortcuts go to the map after a toolbar click.
+    if ((e.target as Element).closest(".mm-toolbar")) {
+      if ((e.target as Element).closest("button")) e.preventDefault();
+      return;
+    }
     // Same reasoning: the minimap handles its own pointer events (click/drag
     // to navigate) and shouldn't also fall through to canvas pan/selection.
     if ((e.target as Element).closest(".mm-minimap")) return;
@@ -765,6 +960,7 @@ export function startApp(
       } else {
         selectOnly(id);
       }
+      nodeToolbarWanted = true;
 
       if (id !== root.id) {
         const groupDrag = selectedIds.has(id) && selectedIds.size > 1;
@@ -783,6 +979,7 @@ export function startApp(
     } else {
       lastClick = null;
       selectOnly(null);
+      nodeToolbarWanted = false;
       dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
       render();
     }
@@ -951,6 +1148,7 @@ export function startApp(
     // transform doesn't carry along — keep the full render while one is up.
     const isEditing = editingId || notesEditingId || iconEditingId || linkEditingId;
     if (isEditing || !applyCamera(canvasEl, camera)) render();
+    else updateFloatingControls();
   }
 
   // Trackpad pinch on Chromium (incl. our own dev-server test target)
@@ -1046,6 +1244,14 @@ export function startApp(
 
   const onWindowKeyDown = (e: KeyboardEvent) => {
     if (!isActive) return;
+    // Keys pressed in a menu or popover (arrow keys, Enter on an item) are
+    // for that menu, not the map.
+    if ((e.target as Element | null)?.closest?.(".mm-popover, .mm-palette-backdrop")) return;
+    // Keyboard work hides the node toolbar; a click on a node brings it back.
+    if (!["Shift", "Meta", "Control", "Alt"].includes(e.key) && !e.metaKey && !e.ctrlKey && nodeToolbarWanted) {
+      nodeToolbarWanted = false;
+      nodeToolbar.update(null);
+    }
     // Global safety net: Escape always exits editing, even if the edit
     // input itself never picked up focus for some reason.
     if (e.key === "Escape" && (editingId || notesEditingId || iconEditingId || linkEditingId)) {
@@ -1077,6 +1283,12 @@ export function startApp(
     if (cmd && e.key.toLowerCase() === "o") {
       e.preventDefault();
       void performOpen();
+      return;
+    }
+    if (cmd && e.key.toLowerCase() === "k" && !isEditingAnything) {
+      e.preventDefault();
+      contextMenu.close();
+      palette.open();
       return;
     }
     if (cmd && e.key.toLowerCase() === "f" && !isEditingAnything) {
@@ -1111,16 +1323,11 @@ export function startApp(
     if (e.key === "n" || e.key === "i" || e.key === "l") {
       if (!selectedId) return;
       e.preventDefault();
-      if (e.key === "n") notesEditingId = selectedId;
-      else if (e.key === "i") iconEditingId = selectedId;
-      else linkEditingId = selectedId;
-      render();
+      openFieldEditor(e.key === "n" ? "notes" : e.key === "i" ? "icon" : "link");
     } else if (e.key === "t") {
       if (!selectedId) return;
       e.preventDefault();
-      cycleStatus(root, selectedId);
-      commit();
-      render();
+      cycleSelectedStatus();
     } else if (e.key === "0") {
       e.preventDefault();
       performZoomToFit();
@@ -1170,32 +1377,18 @@ export function startApp(
       }
     } else if (e.key === "Tab") {
       e.preventDefault();
-      addNodeAndEdit(selectedId ? (findNode(root, selectedId) ?? root) : root);
+      addChildToSelection();
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (!selectedId) addNodeAndEdit(root);
-      else addNodeAndEdit(siblingParentOf(selectedId), selectedId);
+      addSiblingToSelection();
     } else if (e.key === "F2" || e.key === " ") {
       if (!selectedId) return;
       e.preventDefault();
       startEditing(selectedId);
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      const targets = [...selectedIds].filter((id) => id !== root.id);
-      if (targets.length === 0) return;
+      if (![...selectedIds].some((id) => id !== root.id)) return;
       e.preventDefault();
-      if (targets.length === 1) {
-        const parent = findParent(root, targets[0]);
-        removeNode(root, targets[0]);
-        commit();
-        selectOnly(parent ? parent.id : null);
-      } else {
-        // Deleting an ancestor also removes its selected descendants, so a
-        // later removeNode() call for one of those is a safe no-op.
-        for (const id of targets) removeNode(root, id);
-        commit();
-        selectOnly(null);
-      }
-      render();
+      deleteSelection();
     }
   };
   window.addEventListener("keydown", onWindowKeyDown);
@@ -1222,7 +1415,21 @@ export function startApp(
     save: () => void performSave(),
     saveAs: () => void performSave(true),
     openRecent: (path) => performOpenRecent(path),
+    importMarkdown: () => void performImportMarkdown(),
+    exportFile: () => void performExport(),
+    print: () => void performPrint(),
     confirmClose: canDiscardChanges,
+    arrange() {
+      arrange();
+      container.focus();
+    },
+    toggleFocus() {
+      toggleFocus();
+      container.focus();
+    },
+    openSearch: () => searchBar.open(),
+    isFocused: () => focusId !== null,
+    canFocus: () => !!selectedId && selectedId !== root.id,
   };
 }
 

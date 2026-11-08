@@ -100,7 +100,7 @@ describe("createWorkspace", () => {
   it("creates a new map by picking a template from the '+' button's panel", () => {
     createWorkspace(container, createNode("First"), null);
     container.querySelector<HTMLButtonElement>(".mm-tab-new")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    const blankItem = [...container.querySelectorAll<HTMLButtonElement>(".mm-popover-item")].find(
+    const blankItem = [...container.querySelectorAll<HTMLButtonElement>(".mm-menu-item")].find(
       (b) => b.textContent === "Blank",
     )!;
     blankItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -126,7 +126,7 @@ describe("createWorkspace", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
     container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.value = "New idea";
     container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!.dispatchEvent(new Event("blur"));
-    expect(tabEls()[1].textContent).toContain("•");
+    expect(tabEls()[1].querySelector<HTMLElement>(".mm-tab-close")!.dataset.dirty).toBe("true");
 
     const asked: string[] = [];
     window.confirm = (text?: string) => {

@@ -1,8 +1,7 @@
 import { createNode, type MindMapNode } from "./model";
 import { startApp, type AppHandle } from "./app";
-import { createTabStrip } from "./tabs";
-import { getTheme, setTheme } from "./theme";
-import { getFontId, setFontId } from "./fonts";
+import { createTitleBar, hasOverlayTitleBar } from "./titlebar";
+import { onViewChange } from "./prefs";
 
 // Multiple maps are multiple fully independent startApp instances, each
 // mounted in its own full-size container stacked in the same #app element.
@@ -29,34 +28,48 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
   const docs: Doc[] = [];
   let activeId: string;
 
-  const tabStrip = createTabStrip(appEl, {
+  const active = () => docs.find((d) => d.id === activeId)!.handle;
+  const titleBar = createTitleBar(appEl, {
     onSwitch: (id) => switchTo(id),
     onClose: (id) => void closeDoc(id),
     onNew: (root) => addDoc(root, null, true),
-    onToggleTheme: () => {
-      setTheme(getTheme() === "dark" ? "light" : "dark");
-      // Most theming is live via CSS custom properties, but a leaf node's
-      // pastel fill is baked into an inline SVG attribute per render — force
-      // every open document to re-render so none of them show a stale shade.
-      for (const d of docs) d.handle.forceRender();
-      refreshTabs();
-    },
-    onPickFont: (fontId) => {
-      setFontId(fontId);
-      // Text wrapping/box sizing is measured from the current font, baked
-      // into the layout per render — force every open document to
-      // re-render so none of them keep stale wrap widths from the old font.
-      for (const d of docs) d.handle.forceRender();
-      refreshTabs();
-    },
+    onArrange: () => active().arrange(),
+    onToggleFocus: () => active().toggleFocus(),
+    onFind: () => active().openSearch(),
+    // macOS has these in its File menu (lib.rs); elsewhere the title bar
+    // shows a File button.
+    file: hasOverlayTitleBar()
+      ? null
+      : {
+          onNew: () => addDoc(createNode("Untitled"), null, true),
+          onOpen: () => active().open(),
+          onOpenRecent: (path) => active().openRecent(path),
+          onSave: () => active().save(),
+          onSaveAs: () => active().saveAs(),
+          onImport: () => active().importMarkdown(),
+          onExport: () => active().exportFile(),
+          onPrint: () => active().print(),
+        },
+  });
+
+  // A theme, font or view change: text is measured in the current font and
+  // some colors are baked into SVG attributes per render, so every open map
+  // renders again, not only the visible one.
+  onViewChange(() => {
+    for (const d of docs) d.handle.forceRender();
+    refreshTabs();
   });
 
   function refreshTabs(): void {
-    tabStrip.update(
+    // Called from a new map's first render too, before it is in `docs`, and
+    // while a closed map's tab is being replaced: then there may be no
+    // active map to ask yet.
+    const current = docs.find((d) => d.id === activeId)?.handle;
+    if (!current) return;
+    titleBar.update(
       docs.map((d) => ({ id: d.id, title: d.handle.getTitle(), dirty: d.handle.isDirty() })),
       activeId,
-      getTheme() === "dark",
-      getFontId(),
+      { focused: current.isFocused(), canFocus: current.canFocus() },
     );
   }
 
@@ -128,6 +141,6 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
       }
       return true;
     },
-    activeMap: () => docs.find((d) => d.id === activeId)!.handle,
+    activeMap: active,
   };
 }

@@ -1,3 +1,5 @@
+import { emitViewChange } from "./prefs";
+
 export interface FontOption {
   id: string;
   label: string;
@@ -58,6 +60,7 @@ export function setFontId(id: string): void {
     // Best-effort — a restricted context (e.g. private browsing) just won't persist it.
   }
   document.documentElement.style.setProperty("--mm-font-family", stackFor(id));
+  emitViewChange();
 }
 
 // Applies whatever getFontId() currently returns. Call once at startup so

@@ -391,7 +391,7 @@ describe("startApp interactions", () => {
     const { root, child } = buildTree();
     startApp(container, root);
 
-    const countLeaves = () => container.querySelectorAll(".mm-leaf").length;
+    const countLeaves = () => container.querySelectorAll(".mm-node:not(.mm-root)").length;
     const before = countLeaves();
 
     fireClick(nodeEl(container, child.id), 100, 100, 0);
@@ -438,7 +438,7 @@ describe("startApp interactions", () => {
   it("does not record a plain click on a node as a history step", () => {
     const { root, child } = buildTree();
     startApp(container, root);
-    const countLeaves = () => container.querySelectorAll(".mm-leaf").length;
+    const countLeaves = () => container.querySelectorAll(".mm-node:not(.mm-root)").length;
     const before = countLeaves();
 
     fireClick(nodeEl(container, child.id), 100, 100, 0);
@@ -682,7 +682,7 @@ describe("startApp interactions", () => {
     expect(child.children.map((c) => c.text)).toEqual(["Idea"]);
 
     fireKeyMeta("z");
-    expect(container.querySelectorAll(".mm-leaf")).toHaveLength(1);
+    expect(container.querySelectorAll(".mm-node:not(.mm-root)")).toHaveLength(1);
   });
 
   it("moves a group with a parent and its child by the drag distance only once", () => {
@@ -910,16 +910,82 @@ describe("startApp interactions", () => {
     const b = addChild(root, "A longer label");
     a.offset = { dx: 30, dy: 10 };
     const app = startApp(container, root);
-    const arrange = container.querySelector<HTMLButtonElement>('.mm-toolbar [title^="Arrange"]')!;
 
-    arrange.click();
+    app.arrange();
     expect(a.offset).toBeUndefined();
     expect(a.width).toBeDefined();
     expect(a.width).toBe(b.width);
 
-    arrange.click();
+    app.arrange();
     fireKeyMeta("z");
     expect(app.isDirty()).toBe(false);
     expect(nodeEl(container, a.id).querySelector(".mm-node-box")!.getAttribute("width")).not.toBe(String(a.width));
+  });
+});
+
+describe("menus, the node toolbar and the command palette", () => {
+  beforeEach(() => localStorage.clear());
+
+  function rightClick(el: Element) {
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+  }
+
+  function menuItem(label: string): HTMLButtonElement {
+    const item = [...container.querySelectorAll<HTMLButtonElement>(".mm-context-menu .mm-menu-item")].find(
+      (b) => b.firstElementChild?.textContent === label,
+    );
+    if (!item) throw new Error(`no menu item "${label}"`);
+    return item;
+  }
+
+  it("deletes a node from its right-click menu, as one undo step", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    rightClick(nodeEl(container, child.id));
+    expect(container.querySelector<HTMLElement>(".mm-context-menu")!.hidden).toBe(false);
+    menuItem("Delete").click();
+    expect(root.children).toHaveLength(0);
+    expect(container.querySelector<HTMLElement>(".mm-context-menu")!.hidden).toBe(true);
+    fireKeyMeta("z");
+    expect(container.querySelectorAll(".mm-node:not(.mm-root)")).toHaveLength(1);
+  });
+
+  it("offers undo and zoom on the empty canvas, and no Delete for the root", () => {
+    const { root } = buildTree();
+    startApp(container, root);
+    rightClick(container.querySelector("svg.mm-canvas")!);
+    expect(menuItem("Undo").disabled).toBe(true);
+    expect(menuItem("Zoom to fit")).toBeDefined();
+    rightClick(nodeEl(container, root.id));
+    expect(() => menuItem("Delete")).toThrow();
+  });
+
+  it("shows the node toolbar for a clicked node and hides it on keyboard work", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const toolbar = container.querySelector<HTMLElement>(".mm-node-toolbar")!;
+    expect(toolbar.hidden).toBe(true);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    expect(toolbar.hidden).toBe(false);
+
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="Checklist status"]')!.click();
+    expect(child.status).toBe("todo");
+
+    fireKey("ArrowLeft");
+    expect(toolbar.hidden).toBe(true);
+  });
+
+  it("runs a command from the ⌘K palette", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKeyMeta("k");
+    const input = container.querySelector<HTMLInputElement>(".mm-palette-input")!;
+    expect(container.querySelector<HTMLElement>(".mm-palette-backdrop")!.hidden).toBe(false);
+    input.value = "add child";
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    commitEdit("New idea");
+    expect(child.children.map((c) => c.text)).toEqual(["New idea"]);
   });
 });

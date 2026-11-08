@@ -1,3 +1,10 @@
+/* Design tokens. Every rule reads its light value as a var() fallback, and
+   :root[data-theme="dark"] at the end defines only the dark values. Keep
+   that pattern: exports copy the .mm- rules into a standalone SVG without
+   these variables, so the fallbacks are what an exported image uses.
+
+   Type scale: 11 / 12 / 13 / 14 / 18px. Radii: 6 / 8 / 10 / 14px. */
+
 * {
   box-sizing: border-box;
 }
@@ -19,19 +26,30 @@ body {
     Arial,
     sans-serif
   );
-  background: var(--mm-bg, #f8f8fa);
+  background: var(--mm-bg, #fafafb);
+  color: var(--mm-text, #1c1c21);
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
   position: relative;
   overflow: hidden;
   user-select: none;
+  -webkit-user-select: none;
   outline: none;
 }
+
+/* ---------- Canvas ---------- */
 
 .mm-canvas-container {
   position: absolute;
   inset: 0;
+}
+
+/* render.ts's syncGrid sets the size and position, so the dots move and
+   scale with the map. */
+.mm-canvas-container.mm-grid {
+  background-image: radial-gradient(circle, var(--mm-grid-dot, #d9d9df) 1px, transparent 1.3px);
 }
 
 .mm-canvas {
@@ -50,46 +68,51 @@ body {
   fill: transparent;
 }
 
+/* Fills and strokes of boxes, lines and pills are SVG attributes set in
+   render.ts, so exports keep them. A CSS fill or stroke here would
+   override those attributes. */
 .mm-root-box {
-  fill: var(--mm-surface, #ffffff);
-  stroke: var(--mm-border, #e9e9ee);
-  stroke-width: 1;
-  filter: drop-shadow(0 1px 2px rgb(16 16 20 / 0.04)) drop-shadow(0 2px 6px rgb(16 16 20 / 0.06));
-}
-
-.mm-root.mm-selected .mm-root-box {
-  stroke: #4c6ef5;
-  stroke-width: 1.5;
+  filter: drop-shadow(0 1px 2px rgb(16 16 20 / 0.05)) drop-shadow(0 4px 12px rgb(16 16 20 / 0.07));
 }
 
 .mm-root-text {
-  font-size: 19px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 650;
   letter-spacing: -0.01em;
-  fill: var(--mm-text, #1f1f26);
+  fill: var(--mm-text, #1c1c21);
 }
 
-.mm-node-box {
-  stroke: transparent;
+.mm-branch .mm-node-text {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.mm-leaf .mm-node-text {
+  font-size: 14px;
+  font-weight: 450;
+  fill: var(--mm-text-secondary, #2a2a31);
+}
+
+.mm-underline {
+  fill: none;
   stroke-width: 2;
-  transition: stroke 0.1s;
+  stroke-linecap: round;
 }
 
-.mm-leaf.mm-selected .mm-node-box {
-  stroke: #4c6ef5;
+.mm-ring {
+  fill: none;
+  stroke-width: 2;
+  pointer-events: none;
 }
 
-.mm-drop-target .mm-node-box,
-.mm-drop-target .mm-root-box {
-  stroke: #12b886;
+.mm-selection-ring {
+  stroke: var(--mm-ring, #3b6ef5);
+}
+
+.mm-drop-ring {
+  stroke: #12a383;
   stroke-width: 2.5;
   stroke-dasharray: 5 3;
-}
-
-.mm-node-text {
-  font-size: 14.5px;
-  font-weight: 500;
-  fill: var(--mm-text-secondary, #33333b);
 }
 
 /* While a title is edited, the editor (.mm-edit-input) takes the node's
@@ -100,36 +123,50 @@ body {
 
 .mm-empty-hint {
   font-size: 13px;
-  fill: var(--mm-text-muted, #6b6d76);
+  fill: var(--mm-text-muted, #6b6b76);
 }
 
 .mm-edge {
   fill: none;
-  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-  opacity: 0.75;
 }
 
 /* Focus mode: everything outside the focused branch fades out. Placed
-   after .mm-node/.mm-edge so it wins the same-specificity tie and actually
-   overrides their opacity (including the sketchy edge's inline attribute,
-   since a CSS class rule always beats a presentation attribute). */
+   after .mm-node/.mm-edge so it wins the same-specificity tie. */
 .mm-dimmed {
   opacity: 0.18;
   transition: opacity 0.15s;
 }
 
-.mm-add-btn circle {
+/* The + (add child) and − (fold) buttons: quiet circles that fill with
+   the branch color (--mm-branch, set per node) on hover. */
+.mm-add-btn circle,
+.mm-fold-btn circle {
   fill: var(--mm-surface, #ffffff);
-  stroke: var(--mm-border-strong, #c7c9d1);
+  stroke: var(--mm-border-strong, #cfcfd7);
   stroke-width: 1;
+  transition:
+    fill 0.12s,
+    stroke 0.12s;
 }
 
-.mm-add-btn path {
-  stroke: var(--mm-text-muted, #6b6d76);
-  stroke-width: 1.5;
+.mm-add-btn path,
+.mm-fold-btn path {
+  stroke: var(--mm-text-muted, #6b6b76);
+  stroke-width: 1.6;
   stroke-linecap: round;
+}
+
+.mm-add-btn:hover circle,
+.mm-fold-btn:hover circle {
+  fill: var(--mm-branch, #3b6ef5);
+  stroke: var(--mm-branch, #3b6ef5);
+}
+
+.mm-add-btn:hover path,
+.mm-fold-btn:hover path {
+  stroke: #ffffff;
 }
 
 .mm-add-btn {
@@ -143,33 +180,12 @@ body {
   pointer-events: auto;
 }
 
-.mm-add-btn:hover circle {
-  fill: #4c6ef5;
-  stroke: #4c6ef5;
-}
-
-.mm-add-btn:hover path {
-  stroke: #ffffff;
-}
-
 .mm-collapse-toggle {
   cursor: pointer;
 }
 
 .mm-fold-hit {
   fill: transparent;
-}
-
-.mm-fold-btn circle {
-  fill: var(--mm-surface, #ffffff);
-  stroke: var(--mm-border-strong, #c7c9d1);
-  stroke-width: 1;
-}
-
-.mm-fold-btn path {
-  stroke: var(--mm-text-muted, #6b6d76);
-  stroke-width: 1.6;
-  stroke-linecap: round;
 }
 
 /* Quiet at rest: the "−" shows only on hover or selection, like the "+". */
@@ -183,28 +199,22 @@ body {
   opacity: 1;
 }
 
-.mm-fold-btn:hover circle {
-  fill: #4c6ef5;
-  stroke: #4c6ef5;
-}
-
-.mm-fold-btn:hover path {
-  stroke: #ffffff;
-}
-
 .mm-fold-pill text {
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.mm-fold-pill:hover rect:not(.mm-fold-hit) {
-  filter: brightness(1.1);
+.mm-fold-pill rect:not(.mm-fold-hit) {
+  stroke-width: 1;
 }
 
-/* Opening a branch: its nodes fade in and slide out from the parent.
-   Folding one: the count pill pops in. Brief, per Apple HIG and Material
-   motion guidance, and off when the system asks for reduced motion. */
+.mm-fold-pill:hover rect:not(.mm-fold-hit) {
+  filter: brightness(0.96);
+}
+
+/* Opening a branch without the slide (no animation frames, or the slide
+   is off): its nodes fade in. Folding one: the count pill pops in. */
 @keyframes mm-reveal {
   from {
     opacity: 0;
@@ -235,14 +245,49 @@ body {
     animation: none;
   }
 
-  .mm-fold-btn {
+  .mm-fold-btn,
+  .mm-add-btn {
     transition: none;
   }
 }
 
+.mm-meta-icon path {
+  fill: none;
+  stroke: var(--mm-text-muted, #6b6b76);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mm-meta-icon {
+  cursor: pointer;
+}
+
+.mm-meta-icon:hover path {
+  stroke: var(--mm-accent, #3b6ef5);
+}
+
+.mm-status-badge {
+  pointer-events: none;
+}
+
+.mm-status-todo circle {
+  fill: none;
+  stroke: var(--mm-text-muted, #6b6b76);
+  stroke-width: 1.5;
+}
+
+.mm-status-done path {
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- Editors on the canvas ---------- */
+
 /* The title editor looks like the node it edits: render.ts sets its fill,
-   font size, padding and radius from the node, and a selection-blue ring
-   (matching .mm-selected) shows it is the active node. */
+   font size, padding and radius from the node, and the selection ring
+   shows it is the active node. */
 .mm-edit-input {
   position: absolute;
   z-index: 5;
@@ -255,21 +300,22 @@ body {
   white-space: pre-wrap;
   font-family: inherit;
   text-align: center;
-  color: var(--mm-text-secondary, #33333b);
-  caret-color: #4c6ef5;
+  color: var(--mm-text-secondary, #2a2a31);
+  background: var(--mm-surface, #ffffff);
+  caret-color: var(--mm-accent, #3b6ef5);
   box-shadow:
-    0 0 0 2px #4c6ef5,
+    0 0 0 2px var(--mm-ring, #3b6ef5),
     0 6px 18px rgb(16 16 20 / 0.12);
 }
 
 .mm-edit-input.mm-edit-root {
-  color: var(--mm-text, #1f1f26);
+  color: var(--mm-text, #1c1c21);
   letter-spacing: -0.01em;
 }
 
 .mm-edit-input::selection,
 .mm-field-panel ::selection {
-  background: rgb(76 110 245 / 0.25);
+  background: rgb(59 110 245 / 0.25);
 }
 
 /* Notes, icon and link editors: a labeled panel below the node. */
@@ -281,9 +327,9 @@ body {
   gap: 6px;
   padding: 8px 10px 10px;
   background: var(--mm-surface, #ffffff);
-  border: 1px solid var(--mm-border, #ececf1);
+  border: 1px solid var(--mm-border, #e6e6eb);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(16 16 20 / 0.14);
+  box-shadow: var(--mm-shadow-lg, 0 2px 4px rgb(16 16 20 / 0.05), 0 12px 32px rgb(16 16 20 / 0.12));
   cursor: default;
 }
 
@@ -299,12 +345,12 @@ body {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--mm-text-muted, #6b6d76);
+  color: var(--mm-text-muted, #6b6b76);
 }
 
 .mm-field-hint {
   font-size: 11px;
-  color: var(--mm-text-muted, #6b6d76);
+  color: var(--mm-text-muted, #6b6b76);
   white-space: nowrap;
 }
 
@@ -315,9 +361,9 @@ body {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.45;
-  color: var(--mm-text, #1f1f26);
-  background: var(--mm-bg, #f8f8fa);
-  border: 1px solid var(--mm-border, #ececf1);
+  color: var(--mm-text, #1c1c21);
+  background: var(--mm-bg, #fafafb);
+  border: 1px solid var(--mm-border, #e6e6eb);
   border-radius: 7px;
   outline: none;
   padding: 6px 8px;
@@ -325,8 +371,8 @@ body {
 
 .mm-notes-input:focus,
 .mm-inline-input:focus {
-  border-color: #4c6ef5;
-  box-shadow: 0 0 0 3px rgb(76 110 245 / 0.15);
+  border-color: var(--mm-accent, #3b6ef5);
+  box-shadow: 0 0 0 3px rgb(59 110 245 / 0.18);
 }
 
 .mm-notes-input {
@@ -335,170 +381,329 @@ body {
   resize: none;
 }
 
-.mm-meta-icon path {
-  fill: none;
-  stroke: var(--mm-text-muted, #6b6d76);
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
+/* ---------- Title bar ---------- */
 
-.mm-meta-icon {
-  cursor: pointer;
-}
-
-.mm-meta-icon:hover path {
-  stroke: #4c6ef5;
-}
-
-.mm-status-badge {
-  pointer-events: none;
-}
-
-.mm-status-badge circle {
-  fill: none;
-  stroke: var(--mm-text-muted, #6b6d76);
-  stroke-width: 1.5;
-}
-
-.mm-status-done circle {
-  fill: #12b886;
-  stroke: #12b886;
-}
-
-.mm-status-done path {
-  stroke: #ffffff;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-/* Toolbar */
-
-.mm-toolbar {
+.mm-titlebar {
   position: absolute;
-  top: 58px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  z-index: 30;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
-  border-radius: 12px;
-  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+  gap: 4px;
+  padding: 0 10px 0 12px;
+  background: var(--mm-chrome, #f2f2f4);
+  border-bottom: 1px solid var(--mm-border, #e4e4e8);
+  cursor: default;
 }
 
-.mm-toolbar-group {
+/* Room for the macOS window buttons (trafficLightPosition in
+   tauri.conf.json). */
+.mm-titlebar-overlay {
+  padding-left: 84px;
+}
+
+.mm-tabs {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.mm-toolbar-divider {
-  width: 1px;
-  height: 20px;
-  background: var(--mm-border, #e5e5ea);
-}
-
-/* Below the toolbar, so it never overlaps the centered tab strip in a
-   narrow window. */
-.mm-search {
-  position: absolute;
-  top: 106px;
-  right: 14px;
-  z-index: 11;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
-}
-
-/* Same specificity as the UA [hidden] rule, so without this the later
-   (page) stylesheet's display:flex above would win by source order and
-   the search bar would stay visible even while `hidden` is set. */
-.mm-search[hidden] {
+.mm-tabs::-webkit-scrollbar {
   display: none;
 }
 
-.mm-search-input {
-  border: none;
-  background: transparent;
-  color: var(--mm-text, #1f1f26);
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-  width: 140px;
-}
-
-.mm-search-count {
-  color: var(--mm-text-muted, #6b6d76);
-  font-size: 12px;
-  white-space: nowrap;
-  min-width: 48px;
-}
-
-.mm-search-btn {
-  border: none;
-  background: transparent;
-  color: var(--mm-text-muted, #6b6d76);
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  cursor: pointer;
+.mm-tab {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  gap: 6px;
+  height: 32px;
+  max-width: 200px;
+  padding: 0 6px 0 12px;
+  border-radius: 8px;
+  color: var(--mm-text-muted, #5e5e68);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.mm-tab:hover {
+  background: var(--mm-hover, rgb(20 20 30 / 0.05));
+}
+
+.mm-tab[data-active="true"] {
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1c1c21);
+  box-shadow:
+    0 0 0 1px var(--mm-tab-edge, rgb(20 20 30 / 0.06)),
+    0 1px 2px rgb(20 20 30 / 0.08);
+}
+
+.mm-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The close button doubles as the unsaved-changes dot, as on macOS. */
+.mm-tab-close {
+  position: relative;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  cursor: default;
+  opacity: 0;
 }
 
-.mm-search-btn svg,
-.mm-tab-close svg,
-.mm-tab-icon svg {
-  width: 14px;
-  height: 14px;
+.mm-tab-close svg {
+  width: 12px;
+  height: 12px;
 }
 
-.mm-search-btn:hover {
-  background: var(--mm-hover-neutral, #f1f1f5);
+.mm-tab:hover .mm-tab-close,
+.mm-tab[data-active="true"] .mm-tab-close,
+.mm-tab-close[data-dirty="true"] {
+  opacity: 1;
 }
 
-/* The branch color button shows the selection's color; a mixed or empty
-   selection shows a neutral ring. */
-.mm-color-dot {
-  width: 14px;
-  height: 14px;
+.mm-tab-close:hover {
+  background: var(--mm-hover-strong, rgb(20 20 30 / 0.1));
+}
+
+.mm-tab-close[data-dirty="true"] svg {
+  display: none;
+}
+
+.mm-tab-close[data-dirty="true"]::after {
+  content: "";
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  border: 1.5px solid rgb(0 0 0 / 0.08);
+  background: currentColor;
+  opacity: 0.6;
 }
 
-.mm-color-dot[data-mixed="true"] {
-  background: conic-gradient(#4c6ef5, #12b886, #f59f00, #e64980, #7048e8, #4c6ef5);
+.mm-tab-close[data-dirty="true"]:hover svg {
+  display: block;
 }
 
-.mm-popover.mm-color-panel {
-  flex-direction: row;
+.mm-tab-close[data-dirty="true"]:hover::after {
+  display: none;
+}
+
+.mm-titlebar-spacer {
+  flex: 1;
+  min-width: 12px;
+  align-self: stretch;
+}
+
+.mm-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mm-icon-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mm-icon, #55555f);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.mm-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mm-icon-btn:hover:not(:disabled) {
+  background: var(--mm-hover, rgb(20 20 30 / 0.06));
+  color: var(--mm-text, #1c1c21);
+}
+
+.mm-icon-btn[data-active="true"] {
+  background: var(--mm-accent-soft, #eaf0fe);
+  color: var(--mm-accent, #3b6ef5);
+}
+
+.mm-icon-btn:disabled {
+  opacity: 0.38;
+}
+
+.mm-text-btn {
+  flex-shrink: 0;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--mm-hover, rgb(20 20 30 / 0.06));
+  color: var(--mm-text-secondary, #3a3a42);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.mm-text-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mm-text-btn:hover,
+.mm-text-btn[aria-expanded="true"] {
+  background: var(--mm-hover-strong, rgb(20 20 30 / 0.1));
+}
+
+/* ---------- Popovers and menus ---------- */
+
+.mm-popover {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e0e0e6);
+  border-radius: 10px;
+  box-shadow: var(--mm-shadow-lg, 0 2px 4px rgb(16 16 20 / 0.05), 0 12px 32px rgb(16 16 20 / 0.12));
+  color: var(--mm-text, #1c1c21);
+  animation: mm-popover-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes mm-popover-in {
+  from {
+    opacity: 0;
+    margin-top: -4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-popover {
+    animation: none;
+  }
+}
+
+/* Same specificity as the UA [hidden] rule, so without this the display
+   above would win by source order and the panel would stay visible. */
+.mm-popover[hidden] {
+  display: none;
+}
+
+.mm-popover[data-align="center"] {
+  transform: translateX(-50%);
+}
+
+.mm-popover[data-align="end"] {
+  transform: translateX(-100%);
+}
+
+.mm-menu-item {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-text, #1c1c21);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+  outline: none;
+}
+
+.mm-menu-item > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mm-menu-item:hover:not(:disabled),
+.mm-menu-item:focus-visible {
+  background: var(--mm-accent, #3b6ef5);
+  color: #ffffff;
+}
+
+.mm-menu-item:disabled {
+  opacity: 0.4;
+}
+
+.mm-menu-key {
+  margin-left: auto;
+  color: var(--mm-text-muted, #6b6b76);
+  font-size: 12px;
+}
+
+.mm-menu-item:hover:not(:disabled) .mm-menu-key,
+.mm-menu-item:focus-visible .mm-menu-key {
+  color: rgb(255 255 255 / 0.8);
+}
+
+.mm-menu-danger {
+  color: var(--mm-danger, #c42b2b);
+}
+
+/* The same red in both themes, so white text on it stays readable. */
+.mm-menu-danger:hover:not(:disabled),
+.mm-menu-danger:focus-visible {
+  background: #c42b2b;
+}
+
+.mm-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--mm-border, #e6e6eb);
+}
+
+.mm-context-menu {
+  min-width: 220px;
+}
+
+.mm-swatch-row {
+  display: flex;
   gap: 8px;
-  max-width: none;
-  padding: 10px;
+  padding: 6px 8px;
 }
 
 .mm-swatch {
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  border: 1.5px solid rgb(0 0 0 / 0.06);
-  cursor: pointer;
   padding: 0;
+  border: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+  cursor: default;
+  transition: transform 0.1s;
 }
 
 .mm-swatch:hover {
@@ -506,14 +711,16 @@ body {
 }
 
 .mm-swatch[data-active="true"] {
-  box-shadow: 0 0 0 2px var(--mm-surface, #ffffff), 0 0 0 4px #4c6ef5;
+  box-shadow:
+    0 0 0 2px var(--mm-surface, #ffffff),
+    0 0 0 3.5px var(--mm-text-muted, #6b6b76);
 }
 
 .mm-swatch-custom {
   display: block;
-  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
   position: relative;
   overflow: hidden;
+  background: conic-gradient(#e5484d, #f5d90a, #30a46c, #0091ff, #8e4ec6, #e5484d);
 }
 
 .mm-swatch-custom input[type="color"] {
@@ -524,254 +731,430 @@ body {
   border: none;
   padding: 0;
   opacity: 0;
-  cursor: pointer;
 }
 
-.mm-edge-btn {
-  width: 28px;
-  height: 24px;
-  border: 1px solid var(--mm-border, #e5e5ea);
-  border-radius: 7px;
-  background: var(--mm-surface, #ffffff);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--mm-text-muted, #6b6d76);
+.mm-color-panel {
+  min-width: 0;
 }
 
-.mm-edge-btn[data-active="true"] {
-  background: var(--mm-accent-soft, #eef1ff);
-  border-color: #4c6ef5;
-  color: #4c6ef5;
+/* The View popover */
+
+.mm-view-panel {
+  width: 272px;
+  padding: 12px;
+  gap: 12px;
 }
 
-.mm-edge-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.mm-edge-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-/* Floating popovers (recent files, new-map templates) */
-
-.mm-popover-anchor {
-  position: relative;
-  display: flex;
-}
-
-.mm-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-  min-width: 160px;
-  max-width: 240px;
-  padding: 6px;
+.mm-view-field {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+.mm-view-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mm-text-muted, #6b6b76);
+}
+
+.mm-segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 2px;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--mm-segment-bg, #ededf0);
 }
 
-/* Same specificity-tie gotcha as .mm-search[hidden] below — display:flex
-   above wins by source order over the UA [hidden] rule without this. */
-.mm-popover[hidden] {
-  display: none;
-}
-
-.mm-popover-item {
-  font-family: inherit;
-  padding: 6px 8px;
+.mm-segmented button {
+  height: 26px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--mm-text, #1f1f26);
-  font-size: 13px;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.mm-popover-item:hover {
-  background: var(--mm-hover-neutral, #f1f1f5);
-}
-
-.mm-popover-empty {
-  padding: 6px 8px;
+  color: var(--mm-text-secondary, #4a4a53);
+  font: inherit;
   font-size: 12px;
-  color: var(--mm-text-muted, #6b6d76);
+  cursor: default;
 }
 
-/* Minimap */
+.mm-segmented button[aria-checked="true"] {
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1c1c21);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgb(16 16 20 / 0.14);
+}
 
+.mm-view-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.mm-view-panel .mm-menu-sep {
+  margin: 0 -12px;
+}
+
+.mm-select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--mm-border, #e0e0e6);
+  border-radius: 7px;
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text, #1c1c21);
+  font: inherit;
+  font-size: 12px;
+}
+
+.mm-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--mm-switch-off, #d6d6dc);
+  transition: background 0.15s;
+  cursor: default;
+}
+
+.mm-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  transition: transform 0.15s;
+}
+
+.mm-switch:checked {
+  background: var(--mm-accent, #3b6ef5);
+}
+
+.mm-switch:checked::before {
+  transform: translateX(14px);
+}
+
+/* ---------- Floating controls on the canvas ---------- */
+
+.mm-zoom {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 10;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 2px;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
+  border-radius: 10px;
+  box-shadow: var(--mm-shadow-md, 0 1px 2px rgb(16 16 20 / 0.05), 0 4px 12px rgb(16 16 20 / 0.06));
+}
+
+.mm-zoom .mm-icon-btn {
+  width: 30px;
+  height: 30px;
+}
+
+.mm-zoom-level {
+  min-width: 52px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-text-secondary, #3a3a42);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.mm-zoom-level:hover {
+  background: var(--mm-hover, rgb(20 20 30 / 0.06));
+}
+
+.mm-icon-btn.mm-help-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
+  box-shadow: var(--mm-shadow-md, 0 1px 2px rgb(16 16 20 / 0.05), 0 4px 12px rgb(16 16 20 / 0.06));
+}
+
+.mm-node-toolbar {
+  position: absolute;
+  z-index: 12;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
+  border-radius: 10px;
+  box-shadow: var(--mm-shadow-lg, 0 2px 4px rgb(16 16 20 / 0.05), 0 12px 32px rgb(16 16 20 / 0.12));
+  animation: mm-popover-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.mm-node-toolbar[data-side="right"] {
+  transform: none;
+}
+
+.mm-node-toolbar[hidden] {
+  display: none;
+}
+
+.mm-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--mm-border, #e6e6eb);
+}
+
+/* The branch color button shows the selection's color; a mixed selection
+   shows a rainbow. */
+.mm-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.1);
+}
+
+.mm-color-dot[data-mixed="true"] {
+  background: conic-gradient(#4f6bed, #12a383, #e8890c, #d6457a, #7a4fe0, #4f6bed);
+}
+
+.mm-search {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
+  border-radius: 10px;
+  box-shadow: var(--mm-shadow-lg, 0 2px 4px rgb(16 16 20 / 0.05), 0 12px 32px rgb(16 16 20 / 0.12));
+}
+
+/* The [hidden] attribute needs its own rule; see .mm-popover[hidden]. */
+.mm-search[hidden] {
+  display: none;
+}
+
+.mm-search-input {
+  border: none;
+  background: transparent;
+  color: var(--mm-text, #1c1c21);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  width: 160px;
+}
+
+.mm-search-count {
+  color: var(--mm-text-muted, #6b6b76);
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 48px;
+}
+
+.mm-search-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-text-muted, #6b6b76);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.mm-search-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mm-search-btn:hover {
+  background: var(--mm-hover, rgb(20 20 30 / 0.06));
+}
+
+/* Minimap: above the help button, off unless turned on in View. */
 .mm-minimap {
   position: absolute;
-  bottom: 14px;
-  right: 14px;
+  bottom: 64px;
+  right: 16px;
   z-index: 10;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
   border-radius: 10px;
-  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
+  box-shadow: var(--mm-shadow-md, 0 1px 2px rgb(16 16 20 / 0.05), 0 4px 12px rgb(16 16 20 / 0.06));
   overflow: hidden;
   cursor: pointer;
   line-height: 0;
 }
 
 .mm-minimap-root {
-  fill: var(--mm-border-strong, #c7c9d1);
+  fill: var(--mm-border-strong, #cfcfd7);
 }
 
 .mm-minimap-viewport {
   fill: none;
-  stroke: #4c6ef5;
+  stroke: var(--mm-accent, #3b6ef5);
   stroke-width: 1.5;
 }
 
-/* Multiple maps */
+/* ---------- Command palette ---------- */
 
-.mm-doc-container {
+.mm-palette-backdrop {
   position: absolute;
   inset: 0;
-}
-
-.mm-tabstrip {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 11;
+  z-index: 60;
   display: flex;
-  align-items: center;
-  gap: 2px;
-  max-width: calc(100% - 28px);
-  padding: 4px;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgb(16 16 20 / 0.06);
-  overflow-x: auto;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 0;
+  background: var(--mm-backdrop, rgb(16 16 20 / 0.12));
 }
 
-.mm-tab {
+.mm-palette-backdrop[hidden] {
+  display: none;
+}
+
+.mm-palette {
+  width: 520px;
+  max-width: 100%;
+  max-height: 62vh;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--mm-text-muted, #6b6d76);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
-  max-width: 160px;
-}
-
-.mm-tab[data-active="true"] {
-  background: var(--mm-accent-soft, #eef1ff);
-  color: var(--mm-text, #1f1f26);
-}
-
-.mm-tab-title {
+  flex-direction: column;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e0e0e6);
+  border-radius: 14px;
+  box-shadow: var(--mm-shadow-xl, 0 4px 8px rgb(16 16 20 / 0.05), 0 24px 56px rgb(16 16 20 / 0.18));
+  animation: mm-popover-in 140ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.mm-tab-close {
-  border: none;
-  background: transparent;
-  color: inherit;
-  opacity: 0.5;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 5px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mm-tab-close:hover {
-  background: var(--mm-hover-neutral, #f1f1f5);
-}
-
-.mm-tab-close:hover {
-  opacity: 1;
-}
-
-.mm-tab-new {
-  border: none;
-  background: transparent;
-  color: var(--mm-text-muted, #6b6d76);
-  font-size: 16px;
-  line-height: 1;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  cursor: pointer;
+.mm-palette-input {
   flex-shrink: 0;
-}
-
-.mm-font-select {
+  height: 52px;
+  padding: 0 18px;
   border: none;
+  border-bottom: 1px solid var(--mm-border, #ececf0);
   background: transparent;
-  color: var(--mm-text-muted, #6b6d76);
+  color: var(--mm-text, #1c1c21);
   font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  height: 26px;
-  border-radius: 7px;
-  cursor: pointer;
-  flex-shrink: 0;
-  /* Room for the longest name ("System Default") in the system font. */
-  max-width: 132px;
+  font-size: 15px;
+  outline: none;
 }
 
-.mm-font-select:hover {
-  background: var(--mm-hover-neutral, #f1f1f5);
+.mm-palette-input::placeholder {
+  color: var(--mm-text-muted, #6b6b76);
 }
 
-.mm-tab-icon {
+.mm-palette-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.mm-palette-group {
+  padding: 10px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mm-text-muted, #6b6b76);
+}
+
+.mm-palette-item {
+  width: 100%;
+  height: 36px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mm-text, #1c1c21);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+}
+
+.mm-palette-item[aria-selected="true"] {
+  background: var(--mm-accent-soft, #eaf0fe);
+}
+
+.mm-palette-item kbd {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  padding: 0;
+  border: 1px solid var(--mm-border, #e0e0e6);
+  border-radius: 5px;
+  background: var(--mm-surface, #ffffff);
+  color: var(--mm-text-muted, #6b6b76);
+  font: inherit;
+  font-size: 11px;
 }
 
-.mm-tab-new:hover {
-  background: var(--mm-hover-neutral, #f1f1f5);
+.mm-palette-empty {
+  padding: 16px 10px;
+  font-size: 13px;
+  color: var(--mm-text-muted, #6b6b76);
 }
 
-/* Dark theme — toggled via data-theme on <html> (see src/theme.ts). Every
-   rule above reads its light-mode value as a var() fallback, so this block
-   only needs to define the variables that actually differ in dark mode. */
-:root[data-theme="dark"] {
-  --mm-bg: #1c1c22;
-  --mm-surface: #26262e;
-  --mm-border: #3a3a44;
-  --mm-border-strong: #4a4a56;
-  --mm-text: #f0f0f3;
-  --mm-text-secondary: #d4d4db;
-  --mm-text-muted: #9a9aa5;
-  --mm-panel-bg: rgb(30 30 36 / 0.85);
-  --mm-accent-soft: #2a2f52;
-  --mm-hover-neutral: #32323c;
+.mm-palette-foot {
+  flex-shrink: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-top: 1px solid var(--mm-border, #ececf0);
+  background: var(--mm-bg, #fafafb);
+  font-size: 11px;
+  color: var(--mm-text-muted, #6b6b76);
 }
+
+/* ---------- Multiple maps ---------- */
+
+/* Each map fills the window below the title bar. */
+.mm-doc-container {
+  position: absolute;
+  inset: 52px 0 0 0;
+  /* It holds keyboard focus for the shortcuts; no ring for that. */
+  outline: none;
+}
+
+/* ---------- Help ---------- */
 
 .mm-help {
   position: absolute;
@@ -783,39 +1166,38 @@ body {
      window, which wraps every description. */
   width: max-content;
   max-width: calc(100% - 32px);
-  box-sizing: border-box;
-  max-height: calc(100% - 120px);
+  max-height: calc(100% - 64px);
   overflow-y: auto;
-  padding: 16px 20px;
-  background: var(--mm-panel-bg, rgb(255 255 255 / 0.85));
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--mm-border, #ececf1);
-  border-radius: 12px;
-  box-shadow: 0 8px 30px rgb(16 16 20 / 0.12);
-  color: var(--mm-text, #1f1f26);
+  padding: 18px 22px;
+  background: var(--mm-surface, #ffffff);
+  border: 1px solid var(--mm-border, #e6e6eb);
+  border-radius: 14px;
+  box-shadow: var(--mm-shadow-xl, 0 4px 8px rgb(16 16 20 / 0.05), 0 24px 56px rgb(16 16 20 / 0.18));
+  color: var(--mm-text, #1c1c21);
   font-size: 13px;
   cursor: default;
 }
 
-/* The [hidden] attribute needs its own rule; see .mm-search[hidden]. */
+/* The [hidden] attribute needs its own rule; see .mm-popover[hidden]. */
 .mm-help[hidden] {
   display: none;
 }
 
 .mm-help-title {
+  font-size: 14px;
   font-weight: 600;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .mm-help dl {
   display: grid;
   grid-template-columns: auto auto;
-  gap: 6px 18px;
+  gap: 7px 20px;
   margin: 0;
 }
 
 .mm-help dt {
-  color: var(--mm-text-muted, #6b6d76);
+  color: var(--mm-text-muted, #6b6b76);
   white-space: nowrap;
 }
 
@@ -823,12 +1205,46 @@ body {
   margin: 0;
 }
 
-/* A visible keyboard focus ring on every control, in the selection blue. */
+/* A visible keyboard focus ring on every control. */
+.mm-titlebar button:focus-visible,
 .mm-toolbar button:focus-visible,
-.mm-tabstrip button:focus-visible,
-.mm-tabstrip select:focus-visible,
-.mm-popover button:focus-visible,
+.mm-popover button:not(.mm-menu-item):focus-visible,
+.mm-popover select:focus-visible,
+.mm-popover input:focus-visible,
 .mm-search button:focus-visible {
-  outline: 2px solid #4c6ef5;
+  outline: 2px solid var(--mm-accent, #3b6ef5);
   outline-offset: 2px;
+}
+
+/* ---------- Dark theme ---------- */
+
+/* Toggled with data-theme on <html> (see src/theme.ts). */
+:root[data-theme="dark"] {
+  --mm-bg: #17171a;
+  --mm-chrome: #1f1f23;
+  --mm-surface: #26262b;
+  --mm-border: #34343b;
+  --mm-border-strong: #4a4a53;
+  --mm-text: #ededf0;
+  --mm-text-secondary: #d6d6dc;
+  --mm-text-muted: #9a9aa4;
+  --mm-icon: #b4b4be;
+  --mm-accent-soft: #263052;
+  --mm-ring: #7a9bff;
+  --mm-hover: rgb(255 255 255 / 0.07);
+  --mm-hover-strong: rgb(255 255 255 / 0.12);
+  --mm-tab-edge: rgb(255 255 255 / 0.06);
+  --mm-grid-dot: #2c2c32;
+  --mm-segment-bg: #1c1c20;
+  --mm-switch-off: #45454e;
+  --mm-danger: #ff6b6b;
+  --mm-backdrop: rgb(0 0 0 / 0.4);
+  --mm-shadow-md: 0 4px 14px rgb(0 0 0 / 0.35);
+  --mm-shadow-lg: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
+  --mm-shadow-xl: 0 4px 8px rgb(0 0 0 / 0.3), 0 24px 56px rgb(0 0 0 / 0.55);
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] .mm-root-box {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.3)) drop-shadow(0 6px 18px rgb(0 0 0 / 0.35));
 }

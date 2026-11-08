@@ -3,9 +3,13 @@
 A simple, elegant mindmapping desktop app for thinking.
 
 Canopy draws your ideas as a left-to-right tree. The root sits on the
-left. Branches grow to the right. Each branch gets its own pastel color.
+left. Branches grow to the right, and each branch gets its own color.
 You can add ideas fast, drag nodes where you want them, and arrange the
 whole tree into neat, even columns with one click.
+
+![Canopy in light mode](docs/screenshot-light.png)
+
+![Canopy in dark mode](docs/screenshot-dark.png)
 
 ## Download
 
@@ -38,14 +42,21 @@ before the first launch:
   Escape on an empty new node removes it.
 - Edit the selected node with F2 or Space, or double-click it. Hover a
   node and click its **+** button to add a child.
-- Press `?` (or the toolbar's help button) to see every keyboard shortcut.
+- Press `?` (or the **?** button in the bottom-right corner) to see every
+  keyboard shortcut.
+- Press `⌘K` to search every command, with its shortcut.
+- Click a node to get a small toolbar next to it: branch color, add child,
+  notes, link, icon, checklist status, and more. Right-click a node for all
+  of its actions, or right-click the empty canvas for undo, Arrange and
+  zoom.
 - Delete the selected node (Delete/Backspace) along with its subtree.
 - Navigate with arrow keys: Up/Down between siblings, Left to the parent,
   Right to the first child. Reorder siblings with Alt+Up/Down.
 - Drag a node to reposition it, or drop it onto another node to reparent
-  it there. Click **Arrange** in the toolbar to undo all manual moves,
+  it there. Click **Arrange** in the title bar to undo all manual moves,
   give every box in a column the same width and line the columns up, or
-  **zoom to fit** (toolbar button or `0`) to frame the whole tree.
+  click the zoom level in the bottom-left corner (or press `0`) to fit
+  the whole tree in the window.
 - Fold a branch with the **−** that appears when you point at a node with
   children, or press `.`. A folded branch shows how many ideas it hides;
   click that number (or press `→`) to open it again. Option-click folds or
@@ -57,27 +68,33 @@ before the first launch:
 - Select multiple nodes with shift+click for bulk recolor, bulk delete, or
   dragging the whole group together.
 - Find a node with `⌘F`; jump between matches with the arrows next to it.
-- Press `F` (or the toolbar button) to focus on a branch, dimming
-  everything else.
+- Press `F` (or the focus button in the title bar) to focus on a branch,
+  dimming everything else.
 - Paste an image from your clipboard onto the selected node.
-- Work on multiple maps at once via the tab strip above the toolbar, or
-  start a new one from a starter template.
-- Pan (drag empty canvas) and zoom (scroll wheel), with a minimap for
-  quick navigation on larger maps.
-- Recolor a branch from the toolbar's color button, including a custom
-  color picker.
-- Switch between curved/straight edges, or a hand-drawn "sketchy" style.
-- Pick a font (including a hand-drawn one) and toggle dark mode from the
-  tab strip.
+- Work on multiple maps at once in tabs in the title bar, or start a new
+  one from a starter template with **+**.
+- Pan (drag empty canvas) and zoom (scroll wheel, or the zoom control in
+  the bottom-left corner).
+- Recolor a branch from the node toolbar or the right-click menu,
+  including a custom color picker.
+- The **View** menu in the title bar holds the settings for how maps
+  look: light, dark, or follow the system appearance; curved or elbow
+  lines; the font (including a hand-drawn one); a hand-drawn "sketchy"
+  style; the dot grid; and a minimap for larger maps.
+- Nodes slide to their new places when you add, move, fold or arrange
+  them (off when macOS asks for reduced motion).
 - Undo/redo (⌘Z / ⌘⇧Z) for every change.
 - Save (⌘S), Save As (⇧⌘S) and open (⌘O) `.canopy` files, a plain JSON
-  format, from the toolbar or the menu bar's File menu, which also has New
-  (⌘N) and Open Recent. On macOS, double-clicking a
-  `.canopy` file opens it directly in Canopy. A "•" on a tab marks unsaved
-  changes. Before you close or replace unsaved work, Canopy asks whether
-  to Save, Don't Save or Cancel.
+  format. On macOS these are in the menu bar's File menu, which also has
+  New (⌘N), Open Recent, Import Markdown, Export (⇧⌘E) and Print (⌘P). On
+  Windows and Linux, the **File** button in the title bar has the same
+  items. On macOS, double-clicking a `.canopy` file opens it directly in
+  Canopy. A dot on a tab's close button marks unsaved changes. Before you
+  close or replace unsaved work, Canopy asks whether to Save, Don't Save
+  or Cancel.
 - Import a Markdown outline, or export the current map as PNG, SVG, or a
-  Markdown outline, from the toolbar. Print directly from the toolbar too.
+  Markdown outline. [`docs/example.canopy`](docs/example.canopy) is a
+  small example map to open.
 
 ## Development
 
@@ -104,16 +121,20 @@ small starter tree so you can jump straight into your own map.
 | `src/textwrap.ts` | Measures and wraps node text. |
 | `src/render.ts` | Draws the tree as SVG, including the hand-drawn "sketchy" style, multi-select highlighting, and focus-mode dimming. |
 | `src/app.ts` | Owns UI state and every event listener for one map. |
-| `src/toolbar.ts` | The floating toolbar. |
-| `src/tabs.ts` / `src/workspace.ts` | The tab strip and multi-map coordination. |
+| `src/titlebar.ts` / `src/workspace.ts` | The title bar (tabs, Arrange, Focus, Find, View, File) and multi-map coordination. |
+| `src/toolbar.ts` | The zoom control, the help button and the node toolbar. |
+| `src/menu.ts` | Popovers and the right-click menu. |
+| `src/palette.ts` | The `⌘K` command palette. |
+| `src/prefs.ts` | View settings shared by every map (lines, hand-drawn style, grid, minimap). |
+| `src/icons.ts` | The icon set. |
 | `src/history.ts` | Undo/redo stack. |
 | `src/persistence.ts` | Save/load to a local `.canopy` file. |
 | `src/exportFile.ts`, `exportImage.ts`, `exportMarkdown.ts` | Export to PNG/SVG/Markdown. |
 | `src/importMarkdown.ts` | Import a Markdown outline as a map. |
 | `src/printMap.ts` | Print the current map. |
-| `src/recentFiles.ts` | The toolbar's Open Recent list. |
+| `src/recentFiles.ts` | The Open Recent list. |
 | `src/templates.ts` | Starter templates for the "+" button. |
-| `src/theme.ts` | Dark mode. |
+| `src/theme.ts` | Light, dark, or the system appearance. |
 | `src/fonts.ts` | The font picker. |
 | `src/search.ts` | The find bar (`⌘F`). |
 | `src/minimap.ts` | The navigable minimap. |

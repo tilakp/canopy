@@ -56,9 +56,10 @@ export function exportSvgString(svgEl: SVGSVGElement, contentBBox: ContentBBox):
   // since the viewBox above handles framing instead, and leaving it in
   // would offset/crop the export to whatever the on-screen camera happened
   // to be at.
-  // The "−" fold button shows on a selected node, and a blank map shows a
-  // how-to-start hint; neither belongs in an image of the map.
-  for (const el of clone.querySelectorAll(".mm-fold-btn, .mm-empty-hint")) el.remove();
+  // The "−" fold button and the selection ring show on a selected node, and
+  // a blank map shows a how-to-start hint; none belongs in an image of the
+  // map.
+  for (const el of clone.querySelectorAll(".mm-fold-btn, .mm-empty-hint, .mm-ring")) el.remove();
   const contentGroup = clone.querySelector(":scope > g");
   contentGroup?.removeAttribute("transform");
 

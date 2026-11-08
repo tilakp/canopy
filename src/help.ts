@@ -22,6 +22,8 @@ const SHORTCUTS: [string, string][] = [
   ["F", "Focus on the selected branch"],
   ["0", "Zoom to fit"],
   ["⌘= / ⌘−", "Zoom in / out"],
+  ["⌘K", "Search all commands"],
+  ["Right-click", "Actions for a node, or for the map"],
   ["⌘F", "Find"],
   ["⌘Z / ⌘⇧Z", "Undo / redo"],
   ["⌘S / ⇧⌘S / ⌘O", "Save / Save As / Open"],

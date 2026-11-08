@@ -1,0 +1,119 @@
+{
+  "id": "n21",
+  "text": "Product launch",
+  "children": [
+    {
+      "id": "n4",
+      "text": "Goals",
+      "children": [
+        {
+          "id": "n1",
+          "text": "Define success metrics",
+          "children": [],
+          "notes": "Weekly active teams, activation in 7 days"
+        },
+        {
+          "id": "n2",
+          "text": "Identify stakeholders",
+          "children": []
+        },
+        {
+          "id": "n3",
+          "text": "Align on scope",
+          "children": [],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "n10",
+      "text": "Milestones",
+      "children": [
+        {
+          "id": "n5",
+          "text": "Kickoff",
+          "children": [],
+          "status": "done"
+        },
+        {
+          "id": "n8",
+          "text": "Private beta",
+          "children": [
+            {
+              "id": "n6",
+              "text": "Invite 50 teams",
+              "children": []
+            },
+            {
+              "id": "n7",
+              "text": "Collect feedback",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "n9",
+          "text": "Launch",
+          "children": [],
+          "status": "todo"
+        }
+      ]
+    },
+    {
+      "id": "n17",
+      "text": "Marketing",
+      "children": [
+        {
+          "id": "n11",
+          "text": "Landing page",
+          "children": [],
+          "icon": "🚀"
+        },
+        {
+          "id": "n12",
+          "text": "Launch video",
+          "children": []
+        },
+        {
+          "id": "n16",
+          "text": "Press kit",
+          "children": [
+            {
+              "id": "n13",
+              "text": "Logos",
+              "children": []
+            },
+            {
+              "id": "n14",
+              "text": "Screenshots",
+              "children": []
+            },
+            {
+              "id": "n15",
+              "text": "Fact sheet",
+              "children": []
+            }
+          ],
+          "collapsed": true
+        }
+      ]
+    },
+    {
+      "id": "n20",
+      "text": "Risks",
+      "children": [
+        {
+          "id": "n18",
+          "text": "Budget",
+          "children": []
+        },
+        {
+          "id": "n19",
+          "text": "Timeline",
+          "children": [],
+          "status": "todo"
+        }
+      ]
+    }
+  ]
+}

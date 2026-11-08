@@ -64,8 +64,9 @@ fn set_recent_files(app: AppHandle, paths: Vec<String>) -> tauri::Result<()> {
 // tao handles only applicationWillTerminate, so nothing can stop it to ask
 // about unsaved changes. It is replaced by an item that asks the frontend
 // first. The default File menu holds only Close Window, so New, Open,
-// Open Recent, Save and Save As go above it; each sends a "menu-command"
-// event that main.ts routes to the active map.
+// Open Recent, Save, Save As, Import Markdown, Export and Print go above
+// it; each sends a "menu-command" event that main.ts routes to the active
+// map. (The window has no toolbar buttons for these on macOS.)
 #[cfg(target_os = "macos")]
 fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
@@ -94,6 +95,10 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
                 &PredefinedMenuItem::separator(app)?,
                 &MenuItem::with_id(app, "save", "Save", true, Some("CmdOrCtrl+S"))?,
                 &MenuItem::with_id(app, "save-as", "Save As…", true, Some("CmdOrCtrl+Shift+S"))?,
+                &PredefinedMenuItem::separator(app)?,
+                &MenuItem::with_id(app, "import", "Import Markdown…", true, None::<&str>)?,
+                &MenuItem::with_id(app, "export", "Export…", true, Some("CmdOrCtrl+Shift+E"))?,
+                &MenuItem::with_id(app, "print", "Print…", true, Some("CmdOrCtrl+P"))?,
                 &PredefinedMenuItem::separator(app)?,
             ],
             0,
@@ -133,7 +138,9 @@ pub fn run() {
                     };
                     ("open-recent".to_string(), Some(path))
                 }
-                None if ["new", "open", "save", "save-as"].contains(&id) => (id.to_string(), None),
+                None if ["new", "open", "save", "save-as", "import", "export", "print"].contains(&id) => {
+                    (id.to_string(), None)
+                }
                 None => return,
             };
             let _ = app.emit("menu-command", MenuCommand { command, path });

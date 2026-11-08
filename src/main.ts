@@ -48,6 +48,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     else if (payload.command === "open") map.open();
     else if (payload.command === "save") map.save();
     else if (payload.command === "save-as") map.saveAs();
+    else if (payload.command === "import") map.importMarkdown();
+    else if (payload.command === "export") map.exportFile();
+    else if (payload.command === "print") map.print();
     else if (payload.command === "open-recent" && payload.path) {
       if (!(await map.openRecent(payload.path))) removeRecentFile(payload.path);
     }

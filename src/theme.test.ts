@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { getTheme, setTheme, initTheme } from "./theme";
+import { getTheme, getThemePref, setTheme, initTheme } from "./theme";
 
 beforeEach(() => {
   localStorage.clear();
@@ -31,6 +31,30 @@ describe("setTheme", () => {
     setTheme("light");
     expect(localStorage.getItem("canopy-theme")).toBe("light");
     expect(document.documentElement.dataset.theme).toBe("light");
+  });
+});
+
+describe("the system theme", () => {
+  function fakeSystem(dark: boolean) {
+    window.matchMedia = ((query: string) => ({
+      matches: dark && query.includes("dark"),
+      addEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  it("is the choice when nothing is persisted", () => {
+    expect(getThemePref()).toBe("system");
+  });
+
+  it("follows the OS appearance", () => {
+    fakeSystem(true);
+    setTheme("system");
+    expect(localStorage.getItem("canopy-theme")).toBe("system");
+    expect(getTheme()).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    fakeSystem(false);
+    expect(getTheme()).toBe("light");
+    delete (window as { matchMedia?: unknown }).matchMedia;
   });
 });
 

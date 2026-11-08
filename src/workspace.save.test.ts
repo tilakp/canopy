@@ -44,7 +44,7 @@ function dirtySecondTab() {
   workspace.openInNewTab(createNode("Second"), null);
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true, cancelable: true }));
-  expect(tabs()[1].textContent).toContain("•");
+  expect(tabs()[1].querySelector<HTMLElement>(".mm-tab-close")!.dataset.dirty).toBe("true");
   return workspace;
 }
 

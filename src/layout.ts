@@ -32,7 +32,9 @@ const V_GAP = 20;
 const H_GAP = 56;
 const ROOT_COLOR = "#2E2C34";
 
-const PALETTE = ["#4C6EF5", "#12B886", "#F59F00", "#E64980", "#7048E8", "#15AABF", "#82C91E"];
+// Seven hues tuned to one lightness, so no branch shouts over another.
+// toolbar.ts's BRANCH_COLORS offers the same ones.
+const PALETTE = ["#4F6BED", "#12A383", "#E8890C", "#D6457A", "#7A4FE0", "#1497AE", "#5E9E2B"];
 
 // Layout doesn't know about text/DOM measurement (that's render.ts's job,
 // and jsdom-based tests fake it); it just needs each node's box size.

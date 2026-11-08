@@ -198,3 +198,65 @@ describe("computeFitCamera", () => {
     expect(fixed.height).toBeGreaterThan(natural.height);
   });
 });
+
+describe("node levels", () => {
+  function renderSelected(root: ReturnType<typeof createNode>, selectedId: string) {
+    return renderMindMap(
+      setup(),
+      root,
+      { selectedIds: new Set([selectedId]), editingId: null, edgeStyle: "curved" },
+      {
+        onEditCommit() {},
+        onEditCancel() {},
+        onNotesCommit() {},
+        onNotesCancel() {},
+        onIconCommit() {},
+        onIconCancel() {},
+        onLinkCommit() {},
+        onLinkCancel() {},
+      },
+    );
+  }
+
+  it("draws the root as a card, a first-level branch as a tinted pill, and deeper ideas on an underline", () => {
+    const root = createNode("Root");
+    const branch = addChild(root, "Branch");
+    const leaf = addChild(branch, "Leaf");
+    render(root);
+    const g = (id: string) => container.querySelector(`[data-node-id="${id}"]`)!;
+
+    expect(g(root.id).classList.contains("mm-root")).toBe(true);
+    expect(g(branch.id).classList.contains("mm-branch")).toBe(true);
+    expect(g(branch.id).querySelector(".mm-node-box")!.getAttribute("fill")).toMatch(/^rgb\(/);
+    expect(g(branch.id).querySelector(".mm-underline")).toBeNull();
+
+    expect(g(leaf.id).classList.contains("mm-leaf")).toBe(true);
+    expect(g(leaf.id).querySelector(".mm-node-box")!.getAttribute("fill")).toBe("transparent");
+    const box = g(leaf.id).querySelector(".mm-node-box")!;
+    const bottom = Number(box.getAttribute("y")) + Number(box.getAttribute("height"));
+    expect(g(leaf.id).querySelector(".mm-underline")!.getAttribute("d")).toContain(` ${bottom} H`);
+  });
+
+  it("makes lines thinner further from the root, and ends a deeper idea's line at its underline", () => {
+    const root = createNode("Root");
+    const branch = addChild(root, "Branch");
+    const leaf = addChild(branch, "Leaf");
+    const deeper = addChild(leaf, "Deeper");
+    const { positions } = render(root);
+    const width = (id: string) => container.querySelector(`.mm-edge[data-to="${id}"]`)!.getAttribute("stroke-width");
+    expect([width(branch.id), width(leaf.id), width(deeper.id)]).toEqual(["3", "2", "1.5"]);
+
+    const leafLayout = positions.get(leaf.id)!;
+    const toLeaf = container.querySelector(`.mm-edge[data-to="${leaf.id}"]`)!.getAttribute("d")!;
+    expect(toLeaf.endsWith(`${leafLayout.x} ${leafLayout.y + leafLayout.height / 2}`)).toBe(true);
+  });
+
+  it("rings the selected node", () => {
+    const root = createNode("Root");
+    const branch = addChild(root, "Branch");
+    renderSelected(root, branch.id);
+    const ring = container.querySelector(`[data-node-id="${branch.id}"] .mm-selection-ring`);
+    expect(ring).not.toBeNull();
+    expect(container.querySelectorAll(".mm-selection-ring")).toHaveLength(1);
+  });
+});
