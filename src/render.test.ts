@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { addChild, createNode } from "./model";
-import { renderMindMap, computeArrangedWidths, computeFitCamera, type EdgeStyle } from "./render";
+import { renderMindMap } from "./render";
+import { computeArrangedWidths } from "./visuals";
+import { computeFitCamera } from "./camera";
+import type { EdgeStyle } from "./edges";
 
 let container: HTMLElement;
 
@@ -18,17 +21,8 @@ function render(root: ReturnType<typeof createNode>, edgeStyle: EdgeStyle = "cur
   return renderMindMap(
     setup(),
     root,
-    { selectedIds: new Set(), editingId: null, edgeStyle },
-    {
-      onEditCommit() {},
-      onEditCancel() {},
-      onNotesCommit() {},
-      onNotesCancel() {},
-      onIconCommit() {},
-      onIconCancel() {},
-      onLinkCommit() {},
-      onLinkCancel() {},
-    },
+    { selectedIds: new Set(), editor: null, edgeStyle },
+    { onCommit() {}, onCancel() {} },
   );
 }
 
@@ -174,7 +168,7 @@ describe("computeFitCamera", () => {
     const hidden = addChild(long, "Hidden but counted");
     long.collapsed = true;
 
-    const widths = computeArrangedWidths(root);
+    const widths = computeArrangedWidths(root, "sans-serif");
     expect(widths.has(root.id)).toBe(false);
     expect(widths.get(short.id)).toBe(widths.get(long.id));
     expect(widths.get(deep.id)).toBe(widths.get(hidden.id));
@@ -204,17 +198,8 @@ describe("node levels", () => {
     return renderMindMap(
       setup(),
       root,
-      { selectedIds: new Set([selectedId]), editingId: null, edgeStyle: "curved" },
-      {
-        onEditCommit() {},
-        onEditCancel() {},
-        onNotesCommit() {},
-        onNotesCancel() {},
-        onIconCommit() {},
-        onIconCancel() {},
-        onLinkCommit() {},
-        onLinkCancel() {},
-      },
+      { selectedIds: new Set([selectedId]), editor: null, edgeStyle: "curved" },
+      { onCommit() {}, onCancel() {} },
     );
   }
 
@@ -258,5 +243,20 @@ describe("node levels", () => {
     const ring = container.querySelector(`[data-node-id="${branch.id}"] .mm-selection-ring`);
     expect(ring).not.toBeNull();
     expect(container.querySelectorAll(".mm-selection-ring")).toHaveLength(1);
+  });
+});
+
+describe("data from a file", () => {
+  it("renders an editor on a node whose id holds a quote, again and again", () => {
+    const root = createNode("Root");
+    const odd = addChild(root, "Odd");
+    odd.id = 'a"b\\c';
+    const state = { selectedIds: new Set<string>(), editor: { kind: "title" as const, id: odd.id }, edgeStyle: "curved" as const };
+    const callbacks = { onCommit() {}, onCancel() {} };
+    const target = setup();
+    renderMindMap(target, root, state, callbacks);
+    target.querySelector<HTMLTextAreaElement>("textarea")!.value = "Typed";
+    expect(() => renderMindMap(target, root, state, callbacks)).not.toThrow();
+    expect(target.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Typed");
   });
 });

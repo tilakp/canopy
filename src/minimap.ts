@@ -1,5 +1,5 @@
 import type { NodeLayout } from "./layout";
-import { computeFitCamera, type Camera } from "./render";
+import { computeFitCamera, type Box, type Camera } from "./camera";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -13,7 +13,7 @@ export interface MinimapCallbacks {
 
 export interface MinimapState {
   positions: Map<string, NodeLayout>;
-  contentBBox: DOMRect;
+  contentBBox: Box;
   camera: Camera;
   viewportSize: { width: number; height: number };
   visible: boolean;
@@ -27,7 +27,7 @@ export interface MinimapHandle {
 // Fits `bbox` into the minimap's small fixed viewport, same math as
 // render.ts's computeFitCamera (which the main canvas uses to fit content
 // into the real viewport) — reused rather than reimplemented.
-export function computeMinimapCamera(bbox: DOMRect): Camera {
+export function computeMinimapCamera(bbox: Box): Camera {
   return computeFitCamera(bbox, { width: MINIMAP_WIDTH, height: MINIMAP_HEIGHT });
 }
 
@@ -66,8 +66,15 @@ export function createMinimap(container: HTMLElement, callbacks: MinimapCallback
   svg.setAttribute("width", String(MINIMAP_WIDTH));
   svg.setAttribute("height", String(MINIMAP_HEIGHT));
   svg.setAttribute("viewBox", `0 0 ${MINIMAP_WIDTH} ${MINIMAP_HEIGHT}`);
+  const dots = document.createElementNS(SVG_NS, "g");
+  const outline = document.createElementNS(SVG_NS, "rect");
+  outline.setAttribute("class", "mm-minimap-viewport");
+  svg.append(dots, outline);
   el.appendChild(svg);
   container.appendChild(el);
+  // The layout the dots were drawn from: a pan or zoom keeps it, so only
+  // the outline moves then.
+  let drawnPositions: Map<string, NodeLayout> | null = null;
 
   // The camera that maps world coordinates to this minimap's own screen
   // space, recomputed on every update() — needed to invert a click back to
@@ -99,29 +106,33 @@ export function createMinimap(container: HTMLElement, callbacks: MinimapCallback
       if (!state.visible || state.positions.size <= 1) {
         el.hidden = true;
         currentCamera = null;
+        drawnPositions = null;
         return;
       }
       el.hidden = false;
       const camera = computeMinimapCamera(state.contentBBox);
       currentCamera = camera;
 
-      svg.innerHTML = "";
-      for (const pos of state.positions.values()) {
-        const w = Math.max(MIN_DOT, pos.width * camera.scale);
-        const h = Math.max(MIN_DOT, pos.height * camera.scale);
-        const cx = camera.x + (pos.x + pos.width / 2) * camera.scale;
-        const cy = camera.y + pos.y * camera.scale;
-        const rect = document.createElementNS(SVG_NS, "rect");
-        rect.setAttribute("x", String(cx - w / 2));
-        rect.setAttribute("y", String(cy - h / 2));
-        rect.setAttribute("width", String(w));
-        rect.setAttribute("height", String(h));
-        rect.setAttribute("rx", "1");
-        // The root has no branch color of its own; a theme color keeps it
-        // from showing as a black block in light mode.
-        if (pos.depth === 0) rect.setAttribute("class", "mm-minimap-root");
-        else rect.setAttribute("fill", pos.color);
-        svg.appendChild(rect);
+      if (state.positions !== drawnPositions) {
+        drawnPositions = state.positions;
+        dots.replaceChildren();
+        for (const pos of state.positions.values()) {
+          const w = Math.max(MIN_DOT, pos.width * camera.scale);
+          const h = Math.max(MIN_DOT, pos.height * camera.scale);
+          const cx = camera.x + (pos.x + pos.width / 2) * camera.scale;
+          const cy = camera.y + pos.y * camera.scale;
+          const rect = document.createElementNS(SVG_NS, "rect");
+          rect.setAttribute("x", String(cx - w / 2));
+          rect.setAttribute("y", String(cy - h / 2));
+          rect.setAttribute("width", String(w));
+          rect.setAttribute("height", String(h));
+          rect.setAttribute("rx", "1");
+          // The root has no branch color of its own; a theme color keeps it
+          // from showing as a black block in light mode.
+          if (pos.depth === 0) rect.setAttribute("class", "mm-minimap-root");
+          else rect.setAttribute("fill", pos.color);
+          dots.appendChild(rect);
+        }
       }
 
       const viewportRect = computeViewportWorldRect(state.camera, state.viewportSize);
@@ -138,13 +149,10 @@ export function createMinimap(container: HTMLElement, callbacks: MinimapCallback
       const clampedY = Math.max(0, outlineY);
       const clampedRight = Math.min(MINIMAP_WIDTH, outlineX + outlineW);
       const clampedBottom = Math.min(MINIMAP_HEIGHT, outlineY + outlineH);
-      const outline = document.createElementNS(SVG_NS, "rect");
-      outline.setAttribute("class", "mm-minimap-viewport");
       outline.setAttribute("x", String(clampedX));
       outline.setAttribute("y", String(clampedY));
       outline.setAttribute("width", String(Math.max(0, clampedRight - clampedX)));
       outline.setAttribute("height", String(Math.max(0, clampedBottom - clampedY)));
-      svg.appendChild(outline);
     },
   };
 }

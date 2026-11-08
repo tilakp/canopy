@@ -1,5 +1,5 @@
 // A generic linear undo/redo stack. Works on whole-document snapshots
-// (structuredClone of the tree) rather than diffs — simple to reason about
+// (cloneTree copies, see document.ts) rather than diffs — simple to reason about
 // and plenty fast for a document this small.
 export interface History<T> {
   push(snapshot: T): void;

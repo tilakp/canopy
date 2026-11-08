@@ -1,10 +1,13 @@
-import { exportSvgString, type ContentBBox } from "./exportImage";
+import { exportSvgString } from "./exportImage";
+import type { Box } from "./camera";
 
 // Prints the live map by embedding a standalone copy of its SVG (the same
 // serialization exportImage.ts's SVG export uses) into a hidden iframe and
 // invoking the browser's native print flow on that iframe's own window —
 // keeps the app chrome (toolbar, tabs) out of the printed page.
-export async function printMap(svgEl: SVGSVGElement, contentBBox: ContentBBox): Promise<void> {
+let previousFrame: HTMLIFrameElement | null = null;
+
+export async function printMap(svgEl: SVGSVGElement, contentBBox: Box): Promise<void> {
   // The XML prolog is only meaningful for a standalone .svg file; inside an
   // HTML document it isn't valid markup.
   const svgMarkup = exportSvgString(svgEl, contentBBox).replace(/^<\?xml.*?\?>\s*/, "");
@@ -34,11 +37,11 @@ export async function printMap(svgEl: SVGSVGElement, contentBBox: ContentBBox): 
     return;
   }
 
-  const cleanup = () => iframe.remove();
-  win.addEventListener("afterprint", cleanup, { once: true });
-  // afterprint support varies across engines, so also clean up on a timeout
-  // as a fallback in case it never fires.
-  setTimeout(cleanup, 5000);
+  // Removed after printing, or by the next print where an engine never
+  // fires afterprint. A timer could remove it while the dialog is open.
+  win.addEventListener("afterprint", () => iframe.remove(), { once: true });
+  previousFrame?.remove();
+  previousFrame = iframe;
 
   win.focus();
   win.print();

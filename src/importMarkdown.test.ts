@@ -139,3 +139,26 @@ describe("fromMarkdown", () => {
   });
 });
 
+
+describe("Markdown from other places", () => {
+  it("reads tab-indented outlines", () => {
+    const root = fromMarkdown("# R\n- a\n\t- b\n\t\t- c\n");
+    expect(root.children).toHaveLength(1);
+    expect(root.children[0].children[0].children[0].text).toBe("c");
+  });
+
+  it("keeps emoji made of several code points whole", () => {
+    for (const icon of ["👍🏽", "👨‍👩‍👧", "🇺🇸", "1️⃣", "★"]) {
+      const node = fromMarkdown(`# R\n- ${icon} Text\n`).children[0];
+      expect(node.icon).toBe(icon);
+      expect(node.text).toBe("Text");
+    }
+  });
+
+  it("round-trips a link with spaces", () => {
+    const root = createNode("R");
+    const child = addChild(root, "Docs");
+    child.link = "https://example.com/a b";
+    expect(fromMarkdown(toMarkdown(root)).children[0]).toMatchObject({ text: "Docs", link: "https://example.com/a b" });
+  });
+});

@@ -72,3 +72,13 @@ describe("parseDocument", () => {
     expect(parseDocument(`{"id":"r","text":"R","width":"wide","children":[]}`).width).toBeUndefined();
   });
 });
+
+describe("colors from a file", () => {
+  it("keeps #rrggbb and drops anything the color math cannot read", () => {
+    const parse = (color: string) =>
+      parseDocument(JSON.stringify({ id: "r", text: "R", color, children: [] })).color;
+    expect(parse("#12a383")).toBe("#12a383");
+    expect(parse("red")).toBeUndefined();
+    expect(parse("#abc")).toBeUndefined();
+  });
+});

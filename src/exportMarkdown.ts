@@ -39,7 +39,11 @@ function linkedLabel(node: MindMapNode): string {
   // An empty bullet ("- ") is not a bullet to a Markdown parser, so it
   // would drop the node on import and move its children to the wrong parent.
   const label = (node.icon ? `${node.icon} ` : "") + escapeMarkdown(node.text.trim() || "Untitled");
-  return node.link ? `[${label}](${node.link})` : label;
+  if (!node.link) return label;
+  // A link with spaces or parentheses goes in angle brackets (CommonMark),
+  // or it would end the link early.
+  const target = /[\s()<>]/.test(node.link) ? `<${node.link.replace(/[<>]/g, encodeURIComponent)}>` : node.link;
+  return `[${label}](${target})`;
 }
 
 // One italic line per notes line: a single *...* cannot span lines.

@@ -1,3 +1,5 @@
+import { LruCache } from "./lru";
+
 export interface WrappedText {
   lines: string[];
   width: number;
@@ -8,10 +10,8 @@ let currentFont = "";
 
 // Every render wraps every node again, and most text has not changed since
 // the last render, so results are cached. The font is part of the key, so a
-// font change needs no explicit clear. The size cap keeps a long session
-// from growing the cache without limit.
-const cache = new Map<string, WrappedText>();
-const CACHE_LIMIT = 5000;
+// font change needs no explicit clear.
+const cache = new LruCache<string, WrappedText>(5000);
 
 // jsdom (used by tests) doesn't implement canvas text measurement, so this
 // falls back to a rough per-character estimate rather than throwing. Real
@@ -43,7 +43,6 @@ export function wrapText(text: string, font: string, maxWidth: number): WrappedT
   const key = `${font}\0${maxWidth}\0${text}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  if (cache.size >= CACHE_LIMIT) cache.clear();
   const result = wrapUncached(text, font, maxWidth);
   cache.set(key, result);
   return result;

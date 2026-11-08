@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { addChild, createNode, findNode, type MindMapNode } from "./model";
 import { startApp } from "./app";
+import { PALETTE, themeColors } from "./colors";
 
 // jsdom doesn't implement real SVG layout, so getBBox() always throws;
 // render.ts's safeBBox() falls back to a zero-size box, which is fine here
@@ -777,7 +778,7 @@ describe("startApp interactions", () => {
 
     fireKey("?");
     expect(panel().hidden).toBe(false);
-    expect(panel().textContent).toContain("Add a child");
+    expect(panel().textContent).toContain("Add child");
 
     fireKey("Escape");
     expect(panel().hidden).toBe(true);
@@ -803,13 +804,13 @@ describe("startApp interactions", () => {
     const { root, child } = buildTree();
     const kid = addChild(child, "Kid");
     child.collapsed = true;
-    startApp(container, root);
+    const app = startApp(container, root);
 
     fireClick(nodeEl(container, child.id).querySelector(".mm-fold-pill")!, 100, 100, 0);
     expect(nodeEl(container, kid.id).classList.contains("mm-revealing")).toBe(true);
     expect(nodeEl(container, child.id).classList.contains("mm-revealing")).toBe(false);
 
-    fireClick(nodeEl(container, kid.id), 100, 100, 2000);
+    app.forceRender();
     expect(nodeEl(container, kid.id).classList.contains("mm-revealing")).toBe(false);
   });
 
@@ -911,12 +912,12 @@ describe("startApp interactions", () => {
     a.offset = { dx: 30, dy: 10 };
     const app = startApp(container, root);
 
-    app.arrange();
+    app.run("map.arrange");
     expect(a.offset).toBeUndefined();
     expect(a.width).toBeDefined();
     expect(a.width).toBe(b.width);
 
-    app.arrange();
+    app.run("map.arrange");
     fireKeyMeta("z");
     expect(app.isDirty()).toBe(false);
     expect(nodeEl(container, a.id).querySelector(".mm-node-box")!.getAttribute("width")).not.toBe(String(a.width));
@@ -1021,5 +1022,117 @@ describe("the title editor while typing", () => {
     type(input, "  Plan  the");
     expect(input.value).toBe("Plan the");
     expect(input.selectionStart).toBe("Plan the".length);
+  });
+});
+
+describe("found by the adversarial review", () => {
+  beforeEach(() => localStorage.clear());
+  const isSelected = (id: string) => nodeEl(container, id).classList.contains("mm-selected");
+
+  it("keeps the shortcuts working after a file loads during a notes edit", () => {
+    const { root, child } = buildTree();
+    const app = startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("n");
+    expect(container.querySelector(".mm-notes-input")).not.toBeNull();
+
+    const opened = createNode("Opened");
+    app.openRoot(opened, "/maps/opened.canopy");
+    expect(container.querySelector(".mm-notes-input")).toBeNull();
+    fireKey("Tab");
+    expect(container.querySelector("textarea.mm-edit-input")).not.toBeNull();
+  });
+
+  it("drops search matches for a deleted node", () => {
+    const root = createNode("Root");
+    const apple = addChild(root, "apple");
+    startApp(container, root);
+    fireKeyMeta("f");
+    const input = container.querySelector<HTMLInputElement>(".mm-search-input")!;
+    input.value = "apple";
+    input.dispatchEvent(new Event("input"));
+    expect(isSelected(apple.id)).toBe(true);
+
+    fireKey("Delete");
+    expect(root.children).toHaveLength(0);
+    expect(container.querySelector(".mm-search-count")!.textContent).not.toContain("1");
+  });
+
+  it("moves a dragged child, not the whole map, when the root is selected too", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, root.id), 100, 100, 0);
+    nodeEl(container, child.id).dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, shiftKey: true, clientX: 100, clientY: 100 }),
+    );
+    pointer(container, "pointermove", 150, 150);
+    pointer(container, "pointerup", 150, 150);
+    expect(root.offset).toBeUndefined();
+    expect(child.offset).toEqual({ dx: 50, dy: 50 });
+  });
+
+  it("makes one undo step for a color dragged in the system picker", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    nodeEl(container, child.id).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const picker = container.querySelector<HTMLInputElement>(".mm-context-menu input[type=color]")!;
+    for (const color of ["#111111", "#222222", "#333333"]) {
+      picker.value = color;
+      picker.dispatchEvent(new Event("input"));
+    }
+    picker.dispatchEvent(new Event("change"));
+    expect(child.color).toBe("#333333");
+
+    // One ⌘Z goes back past every previewed color to the branch's own.
+    const fill = () => nodeEl(container, child.id).querySelector(".mm-node-box")!.getAttribute("fill");
+    fireKeyMeta("z");
+    const previewed = ["#111111", "#222222", "#333333"].map((c) => themeColors(false).branch(c).fill);
+    expect(previewed).not.toContain(fill());
+    expect(fill()).toBe(themeColors(false).branch(PALETTE[0]).fill);
+  });
+
+  it("leaves the system menu to a right-click inside an editor", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    container.querySelector("textarea.mm-edit-input")!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("takes single-letter shortcuts with Caps Lock on", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("T");
+    expect(child.status).toBe("todo");
+  });
+
+  it("shows the one add button in the hovered node, and adds a child from it", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    expect(container.querySelectorAll(".mm-add-btn")).toHaveLength(0);
+    nodeEl(container, child.id).dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    nodeEl(container, root.id).dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    nodeEl(container, child.id).dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(container.querySelectorAll(".mm-add-btn")).toHaveLength(1);
+    const button = nodeEl(container, child.id).querySelector(".mm-add-btn")!;
+    button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    commitEdit("Grandchild");
+    expect(child.children.map((c) => c.text)).toEqual(["Grandchild"]);
+  });
+
+  it("selects without rebuilding the map", () => {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    const svg = container.querySelector("svg.mm-canvas");
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    expect(container.querySelector("svg.mm-canvas")).toBe(svg);
+    expect(isSelected(child.id)).toBe(true);
+    expect(nodeEl(container, child.id).querySelector(".mm-selection-ring")).not.toBeNull();
+    fireKey("ArrowLeft");
+    expect(container.querySelector("svg.mm-canvas")).toBe(svg);
+    expect(nodeEl(container, child.id).querySelector(".mm-selection-ring")).toBeNull();
   });
 });

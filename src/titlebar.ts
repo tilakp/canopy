@@ -2,10 +2,11 @@ import type { MindMapNode } from "./model";
 import { TEMPLATES } from "./templates";
 import { FONT_OPTIONS, getFontId, setFontId } from "./fonts";
 import { getThemePref, setTheme, type ThemePref } from "./theme";
-import { getViewPrefs, setViewPref, type ViewPrefs } from "./prefs";
+import { getViewPrefs, onViewChange, setViewPref, type ViewPrefs } from "./prefs";
 import { getRecentFiles, removeRecentFile } from "./recentFiles";
 import { attachPopover, fillMenu, moveMenuFocus, type MenuEntry } from "./menu";
-import { ICONS } from "./icons";
+import { ICONS, iconButton } from "./icons";
+import { formatKey } from "./commands";
 
 export interface TabInfo {
   id: string;
@@ -52,15 +53,6 @@ export function hasOverlayTitleBar(): boolean {
   return navigator.userAgent.includes("Mac") && "__TAURI_INTERNALS__" in window;
 }
 
-function iconButton(icon: string, label: string, shortcut?: string): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.className = "mm-icon-btn";
-  btn.innerHTML = icon;
-  btn.setAttribute("aria-label", label);
-  btn.title = shortcut ? `${label}  ${shortcut}` : label;
-  return btn;
-}
-
 export function createTitleBar(host: HTMLElement, callbacks: TitleBarCallbacks): TitleBarHandle {
   const el = document.createElement("header");
   el.className = "mm-titlebar";
@@ -72,12 +64,13 @@ export function createTitleBar(host: HTMLElement, callbacks: TitleBarCallbacks):
   const tabsEl = document.createElement("nav");
   tabsEl.className = "mm-tabs";
   tabsEl.setAttribute("aria-label", "Open maps");
+  tabsEl.setAttribute("role", "tablist");
   tabsEl.setAttribute("data-tauri-drag-region", "");
 
   const newBtn = iconButton(ICONS.plus, "New map");
   newBtn.classList.add("mm-tab-new");
   const templatePanel = document.createElement("div");
-  const templates = attachPopover(host, newBtn, templatePanel, "start");
+  const templates = attachPopover(host, newBtn, templatePanel, { align: "start" });
   fillMenu(
     templatePanel,
     TEMPLATES.map((t) => ({ label: t.name, run: () => callbacks.onNew(t.build()) })),
@@ -93,38 +86,50 @@ export function createTitleBar(host: HTMLElement, callbacks: TitleBarCallbacks):
 
   if (callbacks.file) actions.appendChild(createFileButton(host, callbacks.file));
 
-  const arrangeBtn = iconButton(ICONS.arrange, "Arrange: line up the columns");
-  arrangeBtn.addEventListener("click", callbacks.onArrange);
-  const focusBtn = iconButton(ICONS.focus, "Focus on the selected branch", "F");
-  focusBtn.addEventListener("click", callbacks.onToggleFocus);
-  const findBtn = iconButton(ICONS.search, "Find", "⌘F");
-  findBtn.addEventListener("click", callbacks.onFind);
+  const arrangeBtn = iconButton(ICONS.arrange, "Arrange: line up the columns", undefined, callbacks.onArrange);
+  const focusBtn = iconButton(ICONS.focus, "Focus on the selected branch", formatKey("F"), callbacks.onToggleFocus);
+  const findBtn = iconButton(ICONS.search, "Find", formatKey("Mod+F"), callbacks.onFind);
 
   const viewBtn = document.createElement("button");
   viewBtn.className = "mm-text-btn mm-view-btn";
   viewBtn.innerHTML = `${ICONS.sliders}<span>View</span>`;
   viewBtn.title = "View options";
   const view = createViewPanel();
-  attachPopover(host, viewBtn, view.panel, "end", view.refresh);
+  attachPopover(host, viewBtn, view.panel, { align: "end", onOpen: view.refresh });
 
   actions.append(arrangeBtn, focusBtn, findBtn, viewBtn);
   el.append(tabsEl, newBtn, spacer, actions);
   host.appendChild(el);
 
+  // One listener for every tab, since the tabs are rebuilt when they
+  // change.
+  tabsEl.addEventListener("click", (e) => {
+    const tabEl = (e.target as Element).closest<HTMLElement>(".mm-tab");
+    if (!tabEl) return;
+    if ((e.target as Element).closest(".mm-tab-close")) callbacks.onClose(tabEl.dataset.id!);
+    else callbacks.onSwitch(tabEl.dataset.id!);
+  });
+
+  // The workspace calls update after every render of the active map, and
+  // the tabs rarely change then; rebuilding them anyway would drop the
+  // hover state of the tab under the pointer.
+  let shownTabs = "";
   return {
     element: el,
     update(tabs, activeId, state) {
       focusBtn.dataset.active = String(state.focused);
       focusBtn.disabled = !state.canFocus && !state.focused;
-      view.refresh();
+      const signature = JSON.stringify([tabs, activeId]);
+      if (signature === shownTabs) return;
+      shownTabs = signature;
       tabsEl.innerHTML = "";
       for (const tab of tabs) {
         const tabEl = document.createElement("div");
         tabEl.className = "mm-tab";
+        tabEl.dataset.id = tab.id;
         tabEl.dataset.active = String(tab.id === activeId);
         tabEl.setAttribute("role", "tab");
         tabEl.setAttribute("aria-selected", String(tab.id === activeId));
-        tabEl.addEventListener("click", () => callbacks.onSwitch(tab.id));
 
         const title = document.createElement("span");
         title.className = "mm-tab-title";
@@ -139,10 +144,6 @@ export function createTitleBar(host: HTMLElement, callbacks: TitleBarCallbacks):
         closeBtn.title = tab.dirty ? "Close map (unsaved changes)" : "Close map";
         closeBtn.setAttribute("aria-label", closeBtn.title);
         closeBtn.innerHTML = ICONS.close;
-        closeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          callbacks.onClose(tab.id);
-        });
         tabEl.appendChild(closeBtn);
         tabsEl.appendChild(tabEl);
       }
@@ -156,15 +157,11 @@ function createFileButton(host: HTMLElement, file: FileActions): HTMLElement {
   btn.textContent = "File";
   const panel = document.createElement("div");
   panel.addEventListener("keydown", (e) => moveMenuFocus(panel, e));
-  // The File button shows in a browser on a Mac too, so the shortcut
-  // labels follow the platform.
-  const mac = navigator.userAgent.includes("Mac");
-  const key = (k: string, shift = false) => (mac ? `${shift ? "⇧" : ""}⌘${k}` : `Ctrl+${shift ? "Shift+" : ""}${k}`);
-  const popover = attachPopover(host, btn, panel, "end", () => {
+  const popover = attachPopover(host, btn, panel, { align: "end", onOpen: () => {
     const recent = getRecentFiles();
     const entries: MenuEntry[] = [
       { label: "New Map", run: file.onNew },
-      { label: "Open…", shortcut: key("O"), run: file.onOpen },
+      { label: "Open…", shortcut: formatKey("Mod+O"), run: file.onOpen },
       "separator",
       ...recent.map((path) => ({
         label: path.split(/[\\/]/).pop() || path,
@@ -175,15 +172,15 @@ function createFileButton(host: HTMLElement, file: FileActions): HTMLElement {
         },
       })),
       ...(recent.length > 0 ? ["separator" as const] : []),
-      { label: "Save", shortcut: key("S"), run: file.onSave },
-      { label: "Save As…", shortcut: key("S", true), run: file.onSaveAs },
+      { label: "Save", shortcut: formatKey("Mod+S"), run: file.onSave },
+      { label: "Save As…", shortcut: formatKey("Mod+Shift+S"), run: file.onSaveAs },
       "separator",
       { label: "Import Markdown…", run: file.onImport },
       { label: "Export…", run: file.onExport },
       { label: "Print…", run: file.onPrint },
     ];
     fillMenu(panel, entries, () => popover.close());
-  });
+  } });
   return btn;
 }
 
@@ -234,7 +231,7 @@ function createViewPanel(): { panel: HTMLElement; refresh(): void } {
 
   panel.append(themeSeg.el, lineSeg.el, fontRow, sep, sketchy.el, grid.el, minimap.el);
 
-  return {
+  const view = {
     panel,
     refresh() {
       const prefs = getViewPrefs();
@@ -246,6 +243,10 @@ function createViewPanel(): { panel: HTMLElement; refresh(): void } {
       minimap.set(prefs.minimap);
     },
   };
+  // A change made here, from the palette or by the OS appearance shows at
+  // once, also while the popover is open.
+  onViewChange(view.refresh);
+  return view;
 }
 
 function segmented<T extends string>(

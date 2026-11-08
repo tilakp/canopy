@@ -1,12 +1,17 @@
+// One open map: its document, its view state (selection, editor, camera,
+// drag, search) and every input that changes them. All actions are
+// commands in one registry (see commands.ts), which the keyboard, the menu
+// bar, the title bar, the toolbars, the right-click menu, the command
+// palette and the help list read.
 import {
   addChild,
   clearOffsets,
-  cloneTree,
   cycleStatus,
   findNode,
   findParent,
   insertSiblingAfter,
   moveSibling,
+  pathTo,
   removeNode,
   reparentNode,
   setCollapsedDeep,
@@ -17,29 +22,30 @@ import {
   setNotes,
   setWidths,
   updateText,
+  visibleNodes,
   type MindMapNode,
 } from "./model";
-import {
-  renderMindMap,
-  computeArrangedWidths,
-  computeFitCamera,
-  applyCamera,
-  type Camera,
-} from "./render";
+import { createDocument } from "./document";
+import { renderMindMap, applyCamera, applySelection, setDropTarget } from "./render";
+import { computeFitCamera, zoomAround, type Box, type Camera } from "./camera";
+import { computeArrangedWidths } from "./visuals";
+import { commitOpenEditor, type EditorKind, type EditorTarget } from "./editors";
+import { startDragPreview, type DragPreview } from "./motion";
 import type { NodeLayout } from "./layout";
-import { BRANCH_COLORS, createNodeToolbar, createZoomControls } from "./toolbar";
-import { createPalette, type Command } from "./palette";
+import { createRegistry, formatKey, labelOf, shortcutOf, isEnabled, type Command } from "./commands";
+import { createNodeToolbar, createZoomControls } from "./toolbar";
+import { createPalette } from "./palette";
 import { createContextMenu, type MenuEntry } from "./menu";
+import { createMinimap } from "./minimap";
+import { createSearchBar } from "./search";
+import { createHelpPanel } from "./help";
+import { PALETTE } from "./colors";
 import { getViewPrefs, setViewPref } from "./prefs";
 import { setTheme } from "./theme";
-import { FONT_OPTIONS, setFontId } from "./fonts";
-import { createMinimap } from "./minimap";
-import { createHistory } from "./history";
+import { FONT_OPTIONS, getFontFamily, setFontId } from "./fonts";
 import { saveToFile, loadFromFile, loadFromPath } from "./persistence";
 import { openLink } from "./links";
 import { exportMap } from "./exportFile";
-import { createSearchBar } from "./search";
-import { createHelpPanel } from "./help";
 import { fromMarkdown } from "./importMarkdown";
 import { printMap } from "./printMap";
 import { addRecentFile } from "./recentFiles";
@@ -49,10 +55,16 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 3;
-// macOS's double-click speed preference can be slower than a hardcoded
-// "fast" guess, and real clicks never land on the exact same pixel twice.
+const ZOOM_STEP = 1.25;
+// Pinch and wheel zoom move further per finger movement than the raw
+// deltas; 1:1 felt slow.
+const PINCH_ZOOM_SENSITIVITY = 1.6;
+// Generous on purpose: real trackpad double-clicks are neither instant nor
+// pixel-perfect, and macOS's double-click speed can be slow.
 const DOUBLE_CLICK_MS = 600;
 const DOUBLE_CLICK_PX = 12;
+// One text line's worth of scroll, for line-mode wheel deltas.
+const WHEEL_LINE_HEIGHT = 16;
 
 type DragState =
   | {
@@ -60,55 +72,45 @@ type DragState =
       id: string;
       startX: number;
       startY: number;
-      // Every dragged node's starting offset, keyed by id — usually just the
-      // one node under the pointer, but a shift+drag on a member of the
-      // current multi-selection moves every selected node together.
-      startOffsets: Map<string, { dx: number; dy: number }>;
+      // Every dragged node with its starting offset: the node under the
+      // pointer, or every selected one for a drag on a multi-selection.
+      moving: Map<MindMapNode, { dx: number; dy: number }>;
+      // Every drawn node that moves: the dragged nodes and what is below.
+      drawn: Set<string>;
+      // Moves the drawn nodes while the pointer moves. Made on the first
+      // move, so a plain click doesn't pay for it; null when the drag must
+      // render each frame instead (hand-drawn style).
+      preview?: DragPreview | null;
     }
   | { type: "pan"; startX: number; startY: number; startCamera: Camera }
   | null;
 
 export interface AppHandle {
+  // Runs a command from the registry (menu bar, title bar). Unknown ids
+  // throw; a disabled command does nothing.
+  run(commandId: string): void;
   openRoot(root: MindMapNode, path: string): void;
-  // Multiple maps share one window's global (window-level) key/resize
-  // listeners across every open document's startApp instance — only the
-  // active one should act on them. The container itself is what actually
-  // shows/hides (see workspace.ts), so pointer/wheel listeners (scoped to
-  // the container) don't need this: a hidden container gets no such events.
+  // Every map's window-level listeners hear every key and resize; only
+  // the visible map acts on them.
   setActive(active: boolean): void;
   getTitle(): string;
-  // Most visual state (CSS custom properties) updates live across every
-  // open document the instant the theme changes, but a node's pastel leaf
-  // fill is computed once per render into an inline SVG attribute — this
-  // forces a fresh render so that color picks up the new theme too.
+  // A render after a change that affects every map (theme, font, view).
   forceRender(): void;
-  // Detaches this instance's window-level listeners when its tab closes.
-  // They're global, so without this a closed document keeps handling every
-  // keystroke (⌘S on a closed map still opens a save dialog) and keeps its
-  // whole tree, undo history and detached DOM alive for the session.
+  // Ends every listener of this map when its tab closes, so a closed map
+  // neither handles keys nor stays in memory.
   destroy(): void;
-  // True when the document has changes that are not saved to its file.
   isDirty(): boolean;
   getFilePath(): string | null;
-  // File menu commands from the menu bar (see main.ts), run on this map.
-  open(): void;
-  save(): void;
-  saveAs(): void;
-  // Resolves to whether the file opened, so a failed path can leave the
+  // Resolves to whether the file opened, so a missing file can leave the
   // recent list.
   openRecent(path: string): Promise<boolean>;
-  importMarkdown(): void;
-  exportFile(): void;
-  print(): void;
-  arrange(): void;
-  // Focus mode on the selected branch, on or off.
-  toggleFocus(): void;
-  openSearch(): void;
+  // Commits an open edit, so a check for unsaved changes includes it.
+  flushEdit(): void;
+  // Before this map closes or is replaced: asks Save / Don't Save / Cancel
+  // if it has unsaved changes. Resolves to whether it may go on.
+  confirmClose(): Promise<boolean>;
   isFocused(): boolean;
   canFocus(): boolean;
-  // Before this map closes: asks Save / Don't Save / Cancel if it has
-  // unsaved changes. Resolves to whether it may close.
-  confirmClose(): Promise<boolean>;
 }
 
 export function startApp(
@@ -117,335 +119,746 @@ export function startApp(
   initialFilePath: string | null = null,
   onChange?: () => void,
 ): AppHandle {
-  let root = initialRoot;
+  const doc = createDocument(initialRoot, initialFilePath);
+  // Every listener and popover of this map ends with it (destroy()).
+  const lifetime = new AbortController();
+  const { signal } = lifetime;
   let isActive = true;
+
+  // The selection: a set for shift+click multi-select, and a primary node
+  // that single-node actions (edit, notes, arrow keys) act on.
   let selectedId: string | null = null;
-  // The full multi-selection (shift+click to add/remove members); selectedId
-  // is the "primary" member that single-target actions (edit, notes/icon/
-  // link, arrow-key navigation, add-child) act on. selectOnly() keeps both
-  // in sync for the common single-selection case.
-  let selectedIds: Set<string> = new Set();
-  function selectOnly(id: string | null): void {
-    selectedId = id;
-    selectedIds = id ? new Set([id]) : new Set();
-  }
-  let editingId: string | null = null;
+  let selectedIds = new Set<string>();
+  // The open editor, if any.
+  let editor: EditorTarget | null = null;
   // A node that Tab/Enter/+ just added, open for its first edit. It is not
-  // in the undo history yet: the add and its first text become one undo
-  // step, and an edit that ends empty (or is cancelled) removes it again.
+  // in the undo history yet: the add and its first text are one undo step,
+  // and an edit that ends empty (or is cancelled) removes it again.
   let newNodeId: string | null = null;
-  let notesEditingId: string | null = null;
-  let iconEditingId: string | null = null;
-  let linkEditingId: string | null = null;
   let focusId: string | null = null;
-  function toggleFocus(): void {
-    if (!selectedId || selectedId === root.id) return;
-    focusId = focusId === selectedId ? null : selectedId;
-    render();
-  }
   let camera: Camera | undefined;
-  let dragState: DragState = null;
+  let drag: DragState = null;
   let dragMoved = false;
-  // Set at pointerdown when shift-clicking a node that's already part of a
-  // multi-selection — resolved at pointerup: a plain click (no drag) then
-  // toggles it off, but a drag moves the whole group without deselecting it.
+  let dropTargetId: string | null = null;
+  // A shift+click on a node already in a multi-selection: a drag moves the
+  // group, a plain click (decided at pointerup) takes the node out.
   let pendingDeselectId: string | null = null;
   let lastClick: { id: string; time: number; x: number; y: number } | null = null;
-  let filePath: string | null = initialFilePath;
-  let lastContentBBox = new DOMRect();
   let lastPositions = new Map<string, NodeLayout>();
-  let dropTargetId: string | null = null;
-  // The node toolbar shows for a selection made with the pointer, and
-  // hides again on keyboard work, where it would only cover the map.
-  let nodeToolbarWanted = false;
+  let lastContentBBox: Box = { x: 0, y: 0, width: 0, height: 0 };
   let searchQuery = "";
   let searchMatchIds: string[] = [];
   let searchIndex = 0;
+  // Animation hints for the next render only (see RenderState).
+  let revealId: string | null = null;
+  let popId: string | null = null;
+  // The node toolbar shows for a selection made with the pointer, and hides
+  // again on keyboard work, where it would only cover the map.
+  let nodeToolbarWanted = false;
 
-  // Dirty tracking compares snapshot identity, not content: the history
-  // hands back the same snapshot object on undo/redo, so undoing back to
-  // the saved state makes the document clean again at no cost.
-  let currentSnapshot = cloneTree(root);
-  // Null means "never saved anywhere", e.g. an imported Markdown outline.
-  let savedSnapshot: MindMapNode | null = currentSnapshot;
-  let history = createHistory(currentSnapshot);
-  function commit(): void {
-    currentSnapshot = cloneTree(root);
-    history.push(currentSnapshot);
-  }
-  function isDirty(): boolean {
-    return currentSnapshot !== savedSnapshot;
-  }
-  // Asked before anything replaces or closes this document: Save (then go
-  // on only if the save worked), Don't Save, or Cancel.
-  async function canDiscardChanges(): Promise<boolean> {
-    if (!isDirty()) return true;
-    const choice = await askToSave(root.text);
-    if (choice === "save") return performSave();
-    return choice === "discard";
-  }
-
-  // Without a focused, focusable element, WKWebView's native tab-navigation
-  // can intercept the Tab key before it reaches the DOM as a keydown event.
-  // Keeping the container focused (except while an edit input is up) avoids
-  // that.
+  // Without a focused element, WKWebView's own tab navigation can take
+  // the Tab key before the page sees it.
   container.tabIndex = -1;
 
-  // renderMindMap() clears its container on every render, so the canvas
-  // gets a dedicated child element — otherwise it would wipe the toolbar
-  // out after the very first render.
+  // renderMindMap clears its container on every render, so the canvas has
+  // its own child: the controls on `container` survive renders.
   const canvasEl = document.createElement("div");
   canvasEl.className = "mm-canvas-container";
   container.appendChild(canvasEl);
 
-  function pickColor(color: string): void {
-    const targets = [...selectedIds].filter((id) => id !== root.id);
+  // ----- Selection -----
+
+  function selectOnly(id: string | null): void {
+    selectedId = id;
+    selectedIds = id ? new Set([id]) : new Set();
+  }
+
+  const selectedNode = () => (selectedId ? findNode(doc.root, selectedId) : null);
+  const selectedNonRoot = () => [...selectedIds].filter((id) => id !== doc.root.id);
+
+  // The nearest node that is drawn: the node itself, or the folded
+  // ancestor hiding it. Null if it is not in the tree.
+  function nearestVisible(id: string): string | null {
+    const path = pathTo(doc.root, id);
+    if (!path) return null;
+    return (path.slice(0, -1).find((n) => n.collapsed) ?? path[path.length - 1]).id;
+  }
+
+  // A selection, focus or search match can point at a node that a delete,
+  // undo, load or fold has removed or hidden. Before each render they move
+  // to what is drawn, so no action targets a node nobody can see.
+  function keepTargetsVisible(): void {
+    const ids = [...new Set([...selectedIds].map(nearestVisible).filter((id): id is string => id !== null))];
+    selectedIds = new Set(ids);
+    if (selectedId) selectedId = nearestVisible(selectedId);
+    if (selectedId && !selectedIds.has(selectedId)) selectedIds.add(selectedId);
+    if (!selectedId) selectedId = ids[0] ?? null;
+    if (focusId) focusId = nearestVisible(focusId);
+    if (focusId === doc.root.id) focusId = null;
+    if (searchQuery) updateSearchMatches(false);
+  }
+
+  // Whether a selected node above `id` (other than the root, which never
+  // moves) already carries it along in a group drag.
+  function hasSelectedAncestor(id: string): boolean {
+    const path = pathTo(doc.root, id) ?? [];
+    return path.slice(1, -1).some((n) => selectedIds.has(n.id));
+  }
+
+  // ----- Rendering -----
+
+  function render(): void {
+    keepTargetsVisible();
+    const prefs = getViewPrefs();
+    canvasEl.classList.toggle("mm-grid", prefs.grid);
+    const result = renderMindMap(
+      canvasEl,
+      doc.root,
+      {
+        selectedIds,
+        editor,
+        edgeStyle: prefs.edgeStyle,
+        sketchy: prefs.sketchy,
+        focusId,
+        camera,
+        dropTargetId,
+        revealId,
+        popId,
+        animate: drag?.type !== "node",
+      },
+      { onCommit: commitEditor, onCancel: cancelEditor },
+    );
+    revealId = null;
+    popId = null;
+    camera = result.camera;
+    lastContentBBox = result.contentBBox;
+    lastPositions = result.positions;
+    minimap.update({
+      positions: lastPositions,
+      contentBBox: lastContentBBox,
+      camera,
+      viewportSize: viewport(),
+      visible: prefs.minimap,
+    });
+    searchBar.update({ query: searchQuery, matchCount: searchMatchIds.length, currentIndex: searchIndex });
+    afterViewChange();
+  }
+
+  // A change to the selection only: marks it on the drawn map instead of
+  // rebuilding the map.
+  function showSelection(): void {
+    if (!applySelection(canvasEl, selectedIds)) return render();
+    afterViewChange();
+  }
+
+  // A change to the camera only (pan, pinch, search jump).
+  function showCamera(): void {
+    if (!camera || !applyCamera(canvasEl, camera)) return render();
+    minimap.update({
+      positions: lastPositions,
+      contentBBox: lastContentBBox,
+      camera,
+      viewportSize: viewport(),
+      visible: getViewPrefs().minimap,
+    });
+    updateFloatingControls();
+  }
+
+  function afterViewChange(): void {
+    updateFloatingControls();
+    onChange?.();
+  }
+
+  // The size of the visible area, kept from the last resize, since reading
+  // it from the DOM after a render forces the browser to lay out the map.
+  let viewportSize: { width: number; height: number } | null = null;
+  function viewport(): { width: number; height: number } {
+    if (viewportSize) return viewportSize;
+    const rect = container.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) viewportSize = { width, height };
+    });
+    observer.observe(container);
+    signal.addEventListener("abort", () => observer.disconnect());
+  }
+
+  // ----- Editing -----
+
+  const isEditing = () => editor !== null;
+
+  function openEditor(kind: EditorKind, id = selectedId): void {
+    if (!id || !findNode(doc.root, id)) return;
+    if (kind === "title") selectOnly(id);
+    editor = { kind, id };
+    render();
+  }
+
+  function commitEditor(target: EditorTarget, value: string, next?: "sibling" | "child"): void {
+    editor = null;
+    const node = findNode(doc.root, target.id);
+    if (!node) return render();
+    if (target.kind !== "title") {
+      const before = node[target.kind];
+      if (target.kind === "notes") setNotes(doc.root, node.id, value);
+      else if (target.kind === "icon") setIcon(doc.root, node.id, value);
+      else setLink(doc.root, node.id, value);
+      if (node[target.kind] !== before) doc.commit();
+      render();
+      container.focus();
+      return;
+    }
+    const isNew = target.id === newNodeId;
+    newNodeId = null;
+    if (isNew && !value.trim()) {
+      removeNewNode(target.id);
+    } else {
+      const before = node.text;
+      updateText(doc.root, node.id, value.trim() || "Untitled");
+      if (isNew || node.text !== before) doc.commit();
+      // Enter or Tab on a node that was just added goes on to the next
+      // one, so a list of ideas is one keystroke per idea. Ending an edit
+      // of an existing node stays a plain commit.
+      if (isNew && next) {
+        if (next === "child") addNodeAndEdit(node);
+        else addNodeAndEdit(siblingParentOf(node.id), node.id);
+        return;
+      }
+    }
+    render();
+    container.focus();
+  }
+
+  // Ends an edit with no commit. A node added just for this edit goes away
+  // again, so a cancelled add leaves no empty box behind.
+  function cancelEditor(): void {
+    if (newNodeId && editor?.id === newNodeId) removeNewNode(newNodeId);
+    newNodeId = null;
+    editor = null;
+    render();
+    container.focus();
+  }
+
+  // ----- Changing the map -----
+
+  // Adds an empty node and opens it for editing: after `afterId` among its
+  // siblings, or as the last child. A folded parent opens first, so the
+  // new node has somewhere to show.
+  function addNodeAndEdit(parent: MindMapNode, afterId?: string): void {
+    parent.collapsed = false;
+    const node = afterId && afterId !== doc.root.id ? insertSiblingAfter(doc.root, afterId, "")! : addChild(parent, "");
+    newNodeId = node.id;
+    openEditor("title", node.id);
+  }
+
+  // Where Enter puts a new sibling: next to the node, or under the root
+  // when the node is the root (it has no siblings).
+  function siblingParentOf(id: string): MindMapNode {
+    return id === doc.root.id ? doc.root : (findParent(doc.root, id) ?? doc.root);
+  }
+
+  function removeNewNode(id: string): void {
+    const parent = findParent(doc.root, id);
+    removeNode(doc.root, id);
+    selectOnly(parent ? parent.id : null);
+  }
+
+  // Folds an open node or opens a folded one; with `allLevels`, every node
+  // below it gets the same state.
+  function toggleFold(id: string, allLevels = false): void {
+    const node = findNode(doc.root, id);
+    if (!node || node.children.length === 0) return;
+    const fold = !node.collapsed;
+    if (allLevels) setCollapsedDeep(node, fold);
+    else node.collapsed = fold;
+    if (fold) popId = id;
+    else revealId = id;
+    doc.commit();
+    render();
+  }
+
+  // A final pick is one undo step; the system color picker previews every
+  // color it passes through without one.
+  function pickColor(color: string, final: boolean): void {
+    const targets = selectedNonRoot();
     if (targets.length === 0) return;
-    for (const id of targets) setColor(root, id, color);
-    commit();
+    for (const id of targets) setColor(doc.root, id, color);
+    if (final) doc.commit();
     render();
   }
 
-  // Arrange: undo manual drags, give every box in a column the same
-  // width (so the columns line up), then show the whole result.
+  // Arrange: undo manual drags and give every box in a column the same
+  // width, so the columns line up; then show the whole result. One undo
+  // step, none if nothing changed.
   function arrange(): void {
-    const before = JSON.stringify(root);
-    clearOffsets(root);
-    setWidths(root, computeArrangedWidths(root));
-    // Arranging an already arranged map changes nothing: no undo step.
-    if (JSON.stringify(root) !== before) commit();
+    const layoutOf = (root: MindMapNode) =>
+      [...visibleNodes(root)].map((n) => `${n.id}:${n.offset?.dx},${n.offset?.dy},${n.width}`).join("|");
+    const before = layoutOf(doc.root);
+    clearOffsets(doc.root);
+    setWidths(doc.root, computeArrangedWidths(doc.root, getFontFamily()));
+    if (layoutOf(doc.root) !== before) doc.commit();
     render();
-    performZoomToFit();
-  }
-
-  // The node actions, shared by the keyboard, the node toolbar, the
-  // right-click menu and the command palette.
-  function openFieldEditor(field: "notes" | "icon" | "link"): void {
-    if (!selectedId) return;
-    if (field === "notes") notesEditingId = selectedId;
-    else if (field === "icon") iconEditingId = selectedId;
-    else linkEditingId = selectedId;
-    render();
+    zoomToFit();
   }
 
   function cycleSelectedStatus(): void {
-    if (!selectedId) return;
-    cycleStatus(root, selectedId);
-    commit();
+    const node = selectedNode();
+    if (!node) return;
+    cycleStatus(doc.root, node.id);
+    doc.commit();
     render();
-  }
-
-  function addChildToSelection(): void {
-    addNodeAndEdit(selectedId ? (findNode(root, selectedId) ?? root) : root);
-  }
-
-  function addSiblingToSelection(): void {
-    if (!selectedId) addNodeAndEdit(root);
-    else addNodeAndEdit(siblingParentOf(selectedId), selectedId);
   }
 
   function deleteSelection(): void {
-    const targets = [...selectedIds].filter((id) => id !== root.id);
+    const targets = selectedNonRoot();
     if (targets.length === 0) return;
-    if (targets.length === 1) {
-      const parent = findParent(root, targets[0]);
-      removeNode(root, targets[0]);
-      commit();
-      selectOnly(parent ? parent.id : null);
-    } else {
-      // Deleting an ancestor also removes its selected descendants, so a
-      // later removeNode() call for one of those is a safe no-op.
-      for (const id of targets) removeNode(root, id);
-      commit();
-      selectOnly(null);
-    }
+    const parent = targets.length === 1 ? findParent(doc.root, targets[0]) : null;
+    // Deleting an ancestor also removes its selected descendants, so a
+    // later removeNode for one of those is a no-op.
+    for (const id of targets) removeNode(doc.root, id);
+    doc.commit();
+    selectOnly(parent?.id ?? null);
     render();
   }
 
-  function selectionColor(): string | null {
-    const colors = [...selectedIds].filter((id) => id !== root.id).map((id) => lastPositions.get(id)?.color ?? null);
-    // A mixed selection has no one color, like a bold button that goes
-    // blank over a mixed-weight range in a word processor.
-    return colors.length > 0 && colors.every((c) => c === colors[0]) ? colors[0] : null;
+  function moveSelected(direction: -1 | 1): void {
+    if (selectedId && moveSibling(doc.root, selectedId, direction)) {
+      doc.commit();
+      render();
+    }
   }
 
+  function toggleFocus(): void {
+    if (focusId && (!selectedId || selectedId === focusId)) focusId = null;
+    else if (selectedId && selectedId !== doc.root.id) focusId = selectedId;
+    render();
+  }
+
+  // Arrow keys: up and down among siblings, left to the parent, right to
+  // the first child (opening a folded node). With nothing selected, any
+  // arrow selects the root.
+  function navigate(key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
+    const node = selectedNode();
+    if (!node) {
+      selectOnly(doc.root.id);
+      return showSelection();
+    }
+    if (key === "ArrowRight") {
+      if (node.collapsed) return toggleFold(node.id);
+      if (node.children.length > 0) selectOnly(node.children[0].id);
+    } else {
+      const parent = findParent(doc.root, node.id);
+      if (!parent) return;
+      if (key === "ArrowLeft") selectOnly(parent.id);
+      else {
+        const siblings = parent.children;
+        const index = siblings.indexOf(node) + (key === "ArrowDown" ? 1 : -1);
+        selectOnly(siblings[Math.min(Math.max(index, 0), siblings.length - 1)].id);
+      }
+    }
+    showSelection();
+  }
+
+  function undo(): void {
+    if (!doc.undo()) return;
+    selectOnly(null);
+    render();
+  }
+
+  function redo(): void {
+    if (!doc.redo()) return;
+    selectOnly(null);
+    render();
+  }
+
+  // ----- Files -----
+
+  function loadRoot(root: MindMapNode, path: string | null): void {
+    doc.load(root, path);
+    selectOnly(null);
+    editor = null;
+    newNodeId = null;
+    focusId = null;
+    camera = undefined;
+    drag = null;
+    closeSearch(false);
+    render();
+  }
+
+  function flushEdit(): void {
+    if (editor) commitOpenEditor(canvasEl);
+  }
+
+  // Asked before anything replaces or closes this map: Save (then go on
+  // only if the save worked), Don't Save, or Cancel. An open edit counts.
+  async function canDiscardChanges(): Promise<boolean> {
+    flushEdit();
+    if (!doc.isDirty()) return true;
+    const choice = await askToSave(doc.root.text);
+    if (choice === "save") return save();
+    return choice === "discard";
+  }
+
+  // Save writes to the open file, or asks for a path if there is none;
+  // Save As always asks. Resolves to whether the map was saved.
+  async function save(saveAs = false): Promise<boolean> {
+    flushEdit();
+    const version = doc.version();
+    let savedPath: string | null;
+    try {
+      savedPath = await saveToFile(doc.root, saveAs ? null : doc.filePath);
+    } catch (err) {
+      await showError(`Could not save the map: ${err}`);
+      return false;
+    }
+    if (!savedPath) return false;
+    doc.markSaved(version, savedPath);
+    addRecentFile(savedPath);
+    onChange?.();
+    return true;
+  }
+
+  // Each file action leaves the map alone when any step fails (a dialog
+  // that is not there outside Tauri, a file that is not a map), rather than
+  // half-replacing it or surfacing an unhandled rejection.
+  async function openFile(): Promise<void> {
+    if (!(await canDiscardChanges())) return;
+    const result = await loadFromFile().catch(() => null);
+    if (result) {
+      loadRoot(result.root, result.path);
+      addRecentFile(result.path);
+    }
+  }
+
+  async function importMarkdown(): Promise<void> {
+    if (!(await canDiscardChanges())) return;
+    const path = await open({ multiple: false, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(() => null);
+    if (!path || Array.isArray(path)) return;
+    const imported = await readTextFile(path).then(fromMarkdown).catch(() => null);
+    if (imported) {
+      loadRoot(imported, null);
+      addRecentFile(path);
+    }
+  }
+
+  async function openRecent(path: string): Promise<boolean> {
+    if (!(await canDiscardChanges())) return true;
+    // Imported Markdown files are in the recent list too, and they are not
+    // JSON, so they go through the importer again.
+    if (path.toLowerCase().endsWith(".md")) {
+      const imported = await readTextFile(path).then(fromMarkdown).catch(() => null);
+      if (!imported) return false;
+      loadRoot(imported, null);
+      addRecentFile(path);
+      return true;
+    }
+    const result = await loadFromPath(path).catch(() => null);
+    if (!result) return false;
+    loadRoot(result.root, result.path);
+    addRecentFile(result.path);
+    return true;
+  }
+
+  const canvasSvg = () => canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
+
+  async function exportFile(): Promise<void> {
+    const svg = canvasSvg();
+    if (svg) await exportMap(doc.root, svg, lastContentBBox);
+  }
+
+  async function print(): Promise<void> {
+    const svg = canvasSvg();
+    if (svg) await printMap(svg, lastContentBBox);
+  }
+
+  // ----- Camera -----
+
+  function zoomToFit(): void {
+    camera = computeFitCamera(lastContentBBox, viewport());
+    render();
+  }
+
+  function zoomBy(factor: number): void {
+    if (!camera) return;
+    const { width, height } = viewport();
+    camera = zoomAround(camera, camera.scale * factor, width / 2, height / 2, ZOOM_MIN, ZOOM_MAX);
+    render();
+  }
+
+  // Continuous zoom (pinch, wheel) changes only the camera, so it takes
+  // the camera-only path: a full render per frame (tens of milliseconds on
+  // a large map) made the gesture uneven. An open editor is HTML placed
+  // from the camera, so it needs the full render.
+  function zoomLive(base: Camera, targetScale: number, anchorX: number, anchorY: number): void {
+    camera = zoomAround(base, targetScale, anchorX, anchorY, ZOOM_MIN, ZOOM_MAX);
+    if (isEditing()) render();
+    else showCamera();
+  }
+
+  function centerOn(id: string): void {
+    const layout = lastPositions.get(id);
+    if (!layout || !camera) return;
+    const { width, height } = viewport();
+    camera = {
+      ...camera,
+      x: width / 2 - (layout.x + layout.width / 2) * camera.scale,
+      y: height / 2 - layout.y * camera.scale,
+    };
+  }
+
+  // ----- Search -----
+
+  // Matches are the drawn nodes only: a node inside a folded branch has no
+  // place on screen to jump to.
+  function updateSearchMatches(resetIndex: boolean): void {
+    const query = searchQuery.trim().toLowerCase();
+    searchMatchIds = query
+      ? [...visibleNodes(doc.root)].filter((n) => n.text.toLowerCase().includes(query)).map((n) => n.id)
+      : [];
+    if (resetIndex || searchIndex >= searchMatchIds.length) searchIndex = 0;
+  }
+
+  function jumpToSearchMatch(): void {
+    const id = searchMatchIds[searchIndex];
+    if (id) {
+      selectOnly(id);
+      centerOn(id);
+      showCamera();
+      showSelection();
+    }
+    searchBar.update({ query: searchQuery, matchCount: searchMatchIds.length, currentIndex: searchIndex });
+  }
+
+  function closeSearch(refocus = true): void {
+    searchBar.close();
+    searchQuery = "";
+    searchMatchIds = [];
+    if (refocus) container.focus();
+  }
+
+  // ----- Commands -----
+
+  const hasNode = () => selectedNode() !== null;
   const STATUS_LABELS = { none: "Mark as to do", todo: "Mark as done", done: "Clear status" };
 
+  const commands = createRegistry([
+    // The selected node. With nothing selected, adding goes under the root.
+    { id: "node.addChild", group: "Selected node", label: "Add child", keys: ["Tab"], run: () => addNodeAndEdit(selectedNode() ?? doc.root) },
+    {
+      id: "node.addSibling",
+      group: "Selected node",
+      label: "Add sibling",
+      keys: ["Enter"],
+      run: () => (selectedId ? addNodeAndEdit(siblingParentOf(selectedId), selectedId) : addNodeAndEdit(doc.root)),
+    },
+    { id: "node.edit", group: "Selected node", label: "Edit text", keys: ["F2", " "], enabled: hasNode, run: () => openEditor("title") },
+    { id: "node.notes", group: "Selected node", label: "Notes", keys: ["N"], enabled: hasNode, run: () => openEditor("notes") },
+    { id: "node.link", group: "Selected node", label: "Link", keys: ["L"], enabled: hasNode, run: () => openEditor("link") },
+    { id: "node.icon", group: "Selected node", label: "Icon", keys: ["I"], enabled: hasNode, run: () => openEditor("icon") },
+    {
+      id: "node.status",
+      group: "Selected node",
+      label: () => STATUS_LABELS[selectedNode()?.status ?? "none"],
+      keys: ["T"],
+      enabled: hasNode,
+      run: cycleSelectedStatus,
+    },
+    {
+      id: "node.fold",
+      group: "Selected node",
+      label: () => (selectedNode()?.collapsed ? "Open branch" : "Fold branch"),
+      keys: ["."],
+      enabled: () => (selectedNode()?.children.length ?? 0) > 0,
+      run: () => toggleFold(selectedId!),
+    },
+    {
+      id: "node.foldAll",
+      group: "Selected node",
+      label: () => (selectedNode()?.collapsed ? "Open every level below" : "Fold every level below"),
+      keys: ["Alt+."],
+      enabled: () => (selectedNode()?.children.length ?? 0) > 0,
+      run: () => toggleFold(selectedId!, true),
+    },
+    {
+      id: "node.focus",
+      group: "Selected node",
+      label: () => (focusId && focusId === selectedId ? "Exit focus" : "Focus on branch"),
+      keys: ["F"],
+      enabled: () => focusId !== null || (selectedId !== null && selectedId !== doc.root.id),
+      run: toggleFocus,
+    },
+    { id: "node.moveUp", group: "Selected node", label: "Move up", keys: ["Alt+ArrowUp"], enabled: hasNode, run: () => moveSelected(-1) },
+    { id: "node.moveDown", group: "Selected node", label: "Move down", keys: ["Alt+ArrowDown"], enabled: hasNode, run: () => moveSelected(1) },
+    {
+      id: "node.delete",
+      group: "Selected node",
+      label: "Delete",
+      keys: ["Backspace", "Delete"],
+      enabled: () => selectedNonRoot().length > 0,
+      run: deleteSelection,
+    },
+    ...(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const).map(
+      (key): Command => ({ id: `select.${key}`, group: "Selected node", label: `Select ${key}`, keys: [key], hidden: true, run: () => navigate(key) }),
+    ),
+    // The map.
+    { id: "map.addIdea", group: "Map", label: "Add idea", hidden: true, run: () => addNodeAndEdit(doc.root) },
+    { id: "map.undo", group: "Map", label: "Undo", keys: ["Mod+Z"], enabled: () => doc.canUndo(), run: undo },
+    { id: "map.redo", group: "Map", label: "Redo", keys: ["Mod+Shift+Z"], enabled: () => doc.canRedo(), run: redo },
+    { id: "map.arrange", group: "Map", label: "Arrange", run: arrange },
+    { id: "map.find", group: "Map", label: "Find", keys: ["Mod+F"], run: () => searchBar.open() },
+    { id: "map.zoomToFit", group: "Map", label: "Zoom to fit", keys: ["0"], run: zoomToFit },
+    { id: "map.zoomIn", group: "Map", label: "Zoom in", keys: ["Mod+=", "Mod++"], whileEditing: true, run: () => zoomBy(ZOOM_STEP) },
+    { id: "map.zoomOut", group: "Map", label: "Zoom out", keys: ["Mod+-"], whileEditing: true, run: () => zoomBy(1 / ZOOM_STEP) },
+    // Files. These work during an edit too: they commit it first.
+    { id: "file.open", group: "File", label: "Open…", keys: ["Mod+O"], whileEditing: true, run: () => void openFile() },
+    { id: "file.save", group: "File", label: "Save", keys: ["Mod+S"], whileEditing: true, run: () => void save() },
+    { id: "file.saveAs", group: "File", label: "Save As…", keys: ["Mod+Shift+S"], whileEditing: true, run: () => void save(true) },
+    { id: "file.import", group: "File", label: "Import Markdown…", run: () => void importMarkdown() },
+    { id: "file.export", group: "File", label: "Export…", run: () => void exportFile() },
+    { id: "file.print", group: "File", label: "Print…", run: () => void print() },
+    // How every map looks.
+    ...(["system", "light", "dark"] as const).map(
+      (theme): Command => ({ id: `view.theme.${theme}`, group: "View", label: `Appearance: ${theme[0].toUpperCase()}${theme.slice(1)}`, run: () => setTheme(theme) }),
+    ),
+    {
+      id: "view.lines",
+      group: "View",
+      label: () => (getViewPrefs().edgeStyle === "curved" ? "Lines: Elbow" : "Lines: Curved"),
+      run: () => setViewPref("edgeStyle", getViewPrefs().edgeStyle === "curved" ? "straight" : "curved"),
+    },
+    viewToggle("sketchy", "hand-drawn style", "Turn on", "Turn off"),
+    viewToggle("grid", "dot grid", "Show", "Hide"),
+    viewToggle("minimap", "minimap", "Show", "Hide"),
+    ...FONT_OPTIONS.map(
+      (font): Command => ({ id: `view.font.${font.id}`, group: "View", label: `Font: ${font.id === "system" ? "System" : font.label}`, run: () => setFontId(font.id) }),
+    ),
+    { id: "help.shortcuts", group: "Help", label: "Keyboard shortcuts", keys: ["?"], run: () => help.toggle() },
+    {
+      id: "palette.open",
+      group: "Help",
+      label: "Commands",
+      keys: ["Mod+K"],
+      hidden: true,
+      run() {
+        contextMenu.close();
+        palette.open();
+      },
+    },
+  ]);
+
+  function viewToggle(pref: "sketchy" | "grid" | "minimap", name: string, on: string, off: string): Command {
+    return {
+      id: `view.${pref}`,
+      group: "View",
+      label: () => `${getViewPrefs()[pref] ? off : on} ${name}`,
+      run: () => setViewPref(pref, !getViewPrefs()[pref]),
+    };
+  }
+
+  // A right-click menu entry for a command. The node menu leaves out what
+  // does not apply; the canvas menu shows it disabled (Undo with nothing
+  // to undo), so its layout stays put.
+  function menuEntry(id: string): MenuEntry {
+    const command = commands.get(id);
+    return {
+      label: labelOf(command),
+      shortcut: shortcutOf(command),
+      disabled: !isEnabled(command),
+      danger: id === "node.delete",
+      run: () => commands.run(id),
+    };
+  }
+
   function nodeMenuEntries(): MenuEntry[] {
-    const node = selectedId ? findNode(root, selectedId) : null;
-    if (!node) return canvasMenuEntries();
-    const isRoot = node.id === root.id;
-    const entries: MenuEntry[] = [
-      { label: "Add child", shortcut: "Tab", run: addChildToSelection },
-      { label: "Add sibling", shortcut: "↩", run: addSiblingToSelection, disabled: isRoot },
-      { label: "Edit text", shortcut: "F2", run: () => startEditing(node.id) },
-      "separator",
-      { label: "Notes", shortcut: "N", run: () => openFieldEditor("notes") },
-      { label: "Link", shortcut: "L", run: () => openFieldEditor("link") },
-      { label: "Icon", shortcut: "I", run: () => openFieldEditor("icon") },
-      { label: STATUS_LABELS[node.status ?? "none"], shortcut: "T", run: cycleSelectedStatus },
+    const groups: (string[] | "swatches")[] = [
+      ["node.addChild", "node.addSibling", "node.edit"],
+      ["node.notes", "node.link", "node.icon", "node.status"],
+      "swatches",
+      ["node.fold", "node.focus"],
+      ["node.delete"],
     ];
-    if (!isRoot) entries.push("separator", { swatches: BRANCH_COLORS, active: selectionColor(), onPick: pickColor });
-    entries.push("separator");
-    if (node.children.length > 0) {
-      entries.push({ label: node.collapsed ? "Open branch" : "Fold branch", shortcut: ".", run: () => toggleFold(node.id) });
-    }
-    if (!isRoot) {
-      entries.push({ label: focusId === node.id ? "Exit focus" : "Focus on branch", shortcut: "F", run: toggleFocus });
-      entries.push("separator", { label: "Delete", shortcut: "⌫", run: deleteSelection, danger: true });
-    }
-    return entries;
+    const isRoot = selectedId === doc.root.id;
+    const sections = groups
+      .map((group): MenuEntry[] => {
+        if (group === "swatches") {
+          return isRoot ? [] : [{ swatches: PALETTE, active: selectionColor(), onPick: pickColor }];
+        }
+        return group.filter((id) => isEnabled(commands.get(id)) && !(isRoot && id === "node.addSibling")).map(menuEntry);
+      })
+      .filter((section) => section.length > 0);
+    return sections.flatMap((section, i) => (i === 0 ? section : ["separator" as const, ...section]));
   }
 
   function canvasMenuEntries(): MenuEntry[] {
     return [
-      { label: "Add idea", shortcut: "Tab", run: () => addNodeAndEdit(root) },
+      menuEntry("map.addIdea"),
       "separator",
-      { label: "Undo", shortcut: "⌘Z", run: performUndo, disabled: !history.canUndo() },
-      { label: "Redo", shortcut: "⇧⌘Z", run: performRedo, disabled: !history.canRedo() },
+      menuEntry("map.undo"),
+      menuEntry("map.redo"),
       "separator",
-      { label: "Arrange", run: arrange },
-      { label: "Zoom to fit", shortcut: "0", run: performZoomToFit },
-      { label: "Commands…", shortcut: "⌘K", run: () => palette.open() },
+      menuEntry("map.arrange"),
+      menuEntry("map.zoomToFit"),
+      { label: "Commands…", shortcut: formatKey("Mod+K"), run: () => palette.open() },
     ];
   }
 
-  function paletteCommands(): Command[] {
-    const commands: Command[] = [];
-    const node = selectedId ? findNode(root, selectedId) : null;
-    if (node) {
-      const isRoot = node.id === root.id;
-      const add = (label: string, shortcut: string | undefined, run: () => void) =>
-        commands.push({ group: "Selected node", label, shortcut, run });
-      add("Add child", "Tab", addChildToSelection);
-      if (!isRoot) add("Add sibling", "↩", addSiblingToSelection);
-      add("Edit text", "F2", () => startEditing(node.id));
-      add("Edit notes", "N", () => openFieldEditor("notes"));
-      add("Edit link", "L", () => openFieldEditor("link"));
-      add("Edit icon", "I", () => openFieldEditor("icon"));
-      add(STATUS_LABELS[node.status ?? "none"], "T", cycleSelectedStatus);
-      if (node.children.length > 0) add(node.collapsed ? "Open branch" : "Fold branch", ".", () => toggleFold(node.id));
-      if (!isRoot) {
-        add(focusId === node.id ? "Exit focus" : "Focus on branch", "F", toggleFocus);
-        add("Delete", "⌫", deleteSelection);
-      }
-    }
-    const map = (label: string, shortcut: string | undefined, run: () => void) =>
-      commands.push({ group: "Map", label, shortcut, run });
-    if (history.canUndo()) map("Undo", "⌘Z", performUndo);
-    if (history.canRedo()) map("Redo", "⇧⌘Z", performRedo);
-    map("Arrange", undefined, arrange);
-    map("Find", "⌘F", () => searchBar.open());
-    map("Zoom to fit", "0", performZoomToFit);
-    map("Zoom in", "⌘=", () => performZoomBy(ZOOM_STEP));
-    map("Zoom out", "⌘−", () => performZoomBy(1 / ZOOM_STEP));
-    const file = (label: string, shortcut: string | undefined, run: () => void) =>
-      commands.push({ group: "File", label, shortcut, run });
-    file("Open…", "⌘O", () => void performOpen());
-    file("Save", "⌘S", () => void performSave());
-    file("Save As…", "⇧⌘S", () => void performSave(true));
-    file("Import Markdown…", undefined, () => void performImportMarkdown());
-    file("Export…", undefined, () => void performExport());
-    file("Print…", undefined, () => void performPrint());
-    const prefs = getViewPrefs();
-    const view = (label: string, run: () => void) => commands.push({ group: "View", label, run });
-    view("Appearance: System", () => setTheme("system"));
-    view("Appearance: Light", () => setTheme("light"));
-    view("Appearance: Dark", () => setTheme("dark"));
-    view(prefs.edgeStyle === "curved" ? "Lines: Elbow" : "Lines: Curved", () =>
-      setViewPref("edgeStyle", prefs.edgeStyle === "curved" ? "straight" : "curved"),
-    );
-    view(prefs.sketchy ? "Turn off hand-drawn style" : "Turn on hand-drawn style", () => setViewPref("sketchy", !prefs.sketchy));
-    view(prefs.grid ? "Hide dot grid" : "Show dot grid", () => setViewPref("grid", !prefs.grid));
-    view(prefs.minimap ? "Hide minimap" : "Show minimap", () => setViewPref("minimap", !prefs.minimap));
-    for (const font of FONT_OPTIONS) view(`Font: ${font.id === "system" ? "System" : font.label}`, () => setFontId(font.id));
-    commands.push({ group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => help.toggle() });
-    return commands;
+  // The selection's shared branch color, or null for a mixed selection, as
+  // a bold button goes blank over mixed text in a word processor.
+  function selectionColor(): string | null {
+    const colors = selectedNonRoot().map((id) => lastPositions.get(id)?.color ?? null);
+    return colors.length > 0 && colors.every((c) => c === colors[0]) ? colors[0] : null;
   }
 
-  const zoomControls = createZoomControls(container, {
-    onZoomIn: () => performZoomBy(ZOOM_STEP),
-    onZoomOut: () => performZoomBy(1 / ZOOM_STEP),
-    onZoomToFit: () => performZoomToFit(),
-    onToggleHelp: () => help.toggle(),
-  });
+  // The help list: every command with a shortcut, plus the gestures.
+  function helpRows(): [string, string][] {
+    const rows: [string, string][] = [
+      ["Arrow keys", "Move the selection (→ also opens a folded branch)"],
+      ["Enter / Tab while typing a new node", "Go on to the next sibling / child"],
+      ["Double-click", "Edit a node"],
+      ["Esc", "Stop editing (an empty new node is removed)"],
+      ["Shift+click", "Select more than one node"],
+      ["⌥-click − or a count", "Fold or open every level below"],
+      ["Right-click", "Actions for a node, or for the map"],
+      [formatKey("Mod+V"), "Paste an image onto the node"],
+    ];
+    for (const command of commands.all()) {
+      if (command.hidden && command.id !== "palette.open") continue;
+      if (!command.keys) continue;
+      const keys = command.keys.map(formatKey).filter((k, i, all) => all.indexOf(k) === i).join(" / ");
+      rows.push([keys, command.id === "palette.open" ? "Search all commands" : labelOf(command)]);
+    }
+    return rows;
+  }
 
+  // ----- Controls -----
+
+  const zoomControls = createZoomControls(container, commands);
+  const contextMenu = createContextMenu(container, signal);
   const nodeToolbar = createNodeToolbar(container, {
+    commands,
     onPickColor: pickColor,
-    onAddChild: addChildToSelection,
-    onNotes: () => openFieldEditor("notes"),
-    onLink: () => openFieldEditor("link"),
-    onIcon: () => openFieldEditor("icon"),
-    onStatus: cycleSelectedStatus,
     onMore: (anchor) => contextMenu.show(anchor.left, anchor.bottom + 6, nodeMenuEntries()),
+    signal,
   });
-
-  const contextMenu = createContextMenu(container);
-  const palette = createPalette(container, paletteCommands, () => container.focus());
-
-  // The node toolbar and the zoom level follow the camera, so they update
-  // after a render and after a camera-only move (pan, pinch).
-  function updateFloatingControls(): void {
-    zoomControls.update(camera?.scale ?? 1);
-    const layout = selectedId ? lastPositions.get(selectedId) : undefined;
-    const isEditing = editingId || notesEditingId || iconEditingId || linkEditingId;
-    if (!camera || !layout || !nodeToolbarWanted || isEditing || dragState) {
-      nodeToolbar.update(null);
-      return;
-    }
-    const s = camera.scale;
-    nodeToolbar.update({
-      left: camera.x + layout.x * s,
-      right: camera.x + (layout.x + layout.width) * s,
-      top: camera.y + (layout.y - layout.height / 2) * s,
-      bottom: camera.y + (layout.y + layout.height / 2) * s,
-      color: selectionColor(),
-      canColor: [...selectedIds].some((id) => id !== root.id),
-      // A folded node has its count pill there, so only a node with no
-      // children at all has the room.
-      roomRight: findNode(root, selectedId!)?.children.length === 0,
-    });
-  }
-
-  container.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    if (editingId || notesEditingId || iconEditingId || linkEditingId) return;
-    const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
-    if (nodeEl) {
-      const id = nodeEl.dataset.nodeId!;
-      if (!selectedIds.has(id)) selectOnly(id);
-      else selectedId = id;
-      nodeToolbarWanted = false;
-      render();
-      contextMenu.show(e.clientX, e.clientY, nodeMenuEntries());
-    } else {
-      contextMenu.show(e.clientX, e.clientY, canvasMenuEntries());
-    }
-  });
-
-  const help = createHelpPanel(container);
-
+  const palette = createPalette(container, commands.all, () => container.focus());
+  const help = createHelpPanel(container, helpRows);
   const minimap = createMinimap(container, {
-    // Re-centers the main camera on the world point the user clicked inside
-    // the minimap.
+    // Centers the camera on the world point clicked in the minimap.
     onNavigate(worldX, worldY) {
       if (!camera) return;
-      const rect = container.getBoundingClientRect();
-      camera = {
-        ...camera,
-        x: rect.width / 2 - worldX * camera.scale,
-        y: rect.height / 2 - worldY * camera.scale,
-      };
-      render();
+      const { width, height } = viewport();
+      camera = { ...camera, x: width / 2 - worldX * camera.scale, y: height / 2 - worldY * camera.scale };
+      showCamera();
     },
   });
-
   const searchBar = createSearchBar(container, {
     onQueryChange(query) {
       searchQuery = query;
-      updateSearchMatches();
-      if (searchMatchIds.length > 0) jumpToSearchMatch();
-      else render();
+      updateSearchMatches(true);
+      jumpToSearchMatch();
     },
     onNext() {
       if (searchMatchIds.length === 0) return;
@@ -457,993 +870,427 @@ export function startApp(
       searchIndex = (searchIndex - 1 + searchMatchIds.length) % searchMatchIds.length;
       jumpToSearchMatch();
     },
-    onClose() {
-      searchBar.close();
-      searchQuery = "";
-      searchMatchIds = [];
-      container.focus();
-      render();
-    },
+    onClose: () => closeSearch(),
   });
 
-  // Mirrors render.ts's own iterateNodes: a collapsed node's descendants
-  // have no layout position, so matches inside one couldn't be centered on
-  // anyway — search is scoped to what's currently visible.
-  function* visibleNodes(node: MindMapNode): Generator<MindMapNode> {
-    yield node;
-    if (node.collapsed) return;
-    for (const child of node.children) yield* visibleNodes(child);
-  }
-
-  function updateSearchMatches(): void {
-    const query = searchQuery.trim().toLowerCase();
-    searchMatchIds = query
-      ? [...visibleNodes(root)].filter((n) => n.text.toLowerCase().includes(query)).map((n) => n.id)
-      : [];
-    searchIndex = 0;
-  }
-
-  function centerCameraOn(id: string): void {
-    const layout = lastPositions.get(id);
-    if (!layout || !camera) return;
-    const rect = container.getBoundingClientRect();
-    camera = {
-      ...camera,
-      x: rect.width / 2 - (layout.x + layout.width / 2) * camera.scale,
-      y: rect.height / 2 - layout.y * camera.scale,
-    };
-  }
-
-  function jumpToSearchMatch(): void {
-    const id = searchMatchIds[searchIndex];
-    if (!id) {
-      render();
-      return;
-    }
-    selectOnly(id);
-    centerCameraOn(id);
-    render();
-  }
-
-  // Animation hints for the next render only (see RenderState).
-  let revealId: string | null = null;
-  let popId: string | null = null;
-
-  function render(): void {
-    // A focused node removed by an edit/undo would otherwise leave every
-    // remaining node dimmed (computeFocusSet finds nothing to keep lit).
-    if (focusId && !findNode(root, focusId)) focusId = null;
-    const prefs = getViewPrefs();
-    canvasEl.classList.toggle("mm-grid", prefs.grid);
-    const result = renderMindMap(
-      canvasEl,
-      root,
-      {
-        selectedIds,
-        editingId,
-        notesEditingId,
-        iconEditingId,
-        linkEditingId,
-        edgeStyle: prefs.edgeStyle,
-        sketchy: prefs.sketchy,
-        focusId,
-        camera,
-        // Nodes slide to their new places after a change, but not while a
-        // drag moves them under the pointer.
-        animate: dragState?.type !== "node",
-        dropTargetId,
-        revealId,
-        popId,
-      },
-      {
-        onEditCommit(id, text, next) {
-          const isNew = id === newNodeId;
-          newNodeId = null;
-          editingId = null;
-          if (isNew && !text.trim()) {
-            removeNewNode(id);
-          } else {
-            const before = findNode(root, id)?.text;
-            updateText(root, id, text.trim() || "Untitled");
-            if (isNew || findNode(root, id)?.text !== before) commit();
-            // Enter or Tab on a node that was just added goes on to the
-            // next one, so a list of ideas is one keystroke per idea.
-            // Ending an edit of an existing node stays a plain commit.
-            if (isNew && next) {
-              if (next === "child") addNodeAndEdit(findNode(root, id)!);
-              else addNodeAndEdit(siblingParentOf(id), id);
-              return;
-            }
-          }
-          render();
-          container.focus();
-        },
-        onEditCancel() {
-          cancelTitleEdit();
-          render();
-          container.focus();
-        },
-        onNotesCommit(id, notes) {
-          const before = findNode(root, id)?.notes;
-          setNotes(root, id, notes);
-          if (findNode(root, id)?.notes !== before) commit();
-          notesEditingId = null;
-          render();
-          container.focus();
-        },
-        onNotesCancel() {
-          notesEditingId = null;
-          render();
-          container.focus();
-        },
-        onIconCommit(id, icon) {
-          const before = findNode(root, id)?.icon;
-          setIcon(root, id, icon);
-          if (findNode(root, id)?.icon !== before) commit();
-          iconEditingId = null;
-          render();
-          container.focus();
-        },
-        onIconCancel() {
-          iconEditingId = null;
-          render();
-          container.focus();
-        },
-        onLinkCommit(id, link) {
-          const before = findNode(root, id)?.link;
-          setLink(root, id, link);
-          if (findNode(root, id)?.link !== before) commit();
-          linkEditingId = null;
-          render();
-          container.focus();
-        },
-        onLinkCancel() {
-          linkEditingId = null;
-          render();
-          container.focus();
-        },
-      },
-    );
-    revealId = null;
-    popId = null;
-    camera = result.camera;
-    lastContentBBox = result.contentBBox;
-    lastPositions = result.positions;
-    // During a node drag only the canvas needs to follow the pointer. The
-    // minimap, toolbar and tab strip catch up on the render at pointerup.
-    if (dragState?.type === "node") {
+  // The node toolbar and the zoom level follow the camera.
+  function updateFloatingControls(): void {
+    zoomControls.update(camera?.scale ?? 1);
+    const layout = selectedId ? lastPositions.get(selectedId) : undefined;
+    if (!camera || !layout || !nodeToolbarWanted || editor || drag) {
       nodeToolbar.update(null);
       return;
     }
-    minimap.update({
-      positions: lastPositions,
-      contentBBox: lastContentBBox,
-      camera,
-      viewportSize: container.getBoundingClientRect(),
-      visible: prefs.minimap,
+    const s = camera.scale;
+    nodeToolbar.update({
+      left: camera.x + layout.x * s,
+      right: camera.x + (layout.x + layout.width) * s,
+      top: camera.y + (layout.y - layout.height / 2) * s,
+      bottom: camera.y + (layout.y + layout.height / 2) * s,
+      color: selectionColor(),
+      canColor: selectedNonRoot().length > 0,
+      // A folded node has its count pill there, so only a node with no
+      // children at all has the room.
+      roomRight: selectedNode()?.children.length === 0,
     });
-    updateFloatingControls();
-    searchBar.update({ query: searchQuery, matchCount: searchMatchIds.length, currentIndex: searchIndex });
-    onChange?.();
   }
 
-  function startEditing(id: string): void {
-    selectOnly(id);
-    editingId = id;
-    render();
-  }
+  // ----- Pointer -----
 
-  // Adds an empty node and opens it for editing. With `afterId`, the node
-  // goes directly after that sibling; otherwise it is the last child. A
-  // collapsed parent opens first, or the new node would have nowhere to
-  // show its edit input.
-  function addNodeAndEdit(parent: MindMapNode, afterId?: string): void {
-    parent.collapsed = false;
-    const node = afterId && afterId !== root.id ? insertSiblingAfter(root, afterId, "")! : addChild(parent, "");
-    newNodeId = node.id;
-    startEditing(node.id);
-  }
+  const on = <K extends keyof HTMLElementEventMap>(
+    type: K,
+    listener: (e: HTMLElementEventMap[K]) => void,
+    options: AddEventListenerOptions = {},
+  ) => container.addEventListener(type, listener, { ...options, signal });
 
-  // Where Enter puts a new sibling: next to the node, or under the root
-  // when the node is the root (it has no siblings).
-  function siblingParentOf(id: string): MindMapNode {
-    return id === root.id ? root : (findParent(root, id) ?? root);
-  }
+  const nodeIdOf = (el: Element | null) => el?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ?? null;
 
-  function removeNewNode(id: string): void {
-    const parent = findParent(root, id);
-    removeNode(root, id);
-    selectOnly(parent ? parent.id : null);
-  }
-
-  // Ends a title edit with no commit. A node added just for this edit goes
-  // away again, so a cancelled add leaves no empty box behind.
-  function cancelTitleEdit(): void {
-    if (newNodeId && newNodeId === editingId) removeNewNode(newNodeId);
-    newNodeId = null;
-    editingId = null;
-  }
-
-  // Folds an open node or opens a folded one; with `allLevels`, every node
-  // below it gets the same state.
-  function toggleFold(id: string, allLevels = false): void {
-    const node = findNode(root, id);
-    if (!node || node.children.length === 0) return;
-    const fold = !node.collapsed;
-    if (allLevels) setCollapsedDeep(node, fold);
-    else node.collapsed = fold;
-    if (fold) {
-      popId = id;
-      // A selected node inside the subtree that just closed would stay
-      // the target of Delete, T, N, I and L while out of sight, so the
-      // selection moves up to the folded node.
-      if ([...selectedIds].some((sid) => sid !== id && findNode(node, sid))) selectOnly(id);
-    } else {
-      revealId = id;
-    }
-    commit();
-    render();
-  }
-
-  function hasSelectedAncestor(id: string): boolean {
-    for (let p = findParent(root, id); p; p = findParent(root, p.id)) {
-      if (selectedIds.has(p.id)) return true;
-    }
-    return false;
-  }
-
-  function loadRoot(newRoot: MindMapNode, path: string | null): void {
-    root = newRoot;
-    filePath = path;
-    selectOnly(null);
-    editingId = null;
-    newNodeId = null;
-    focusId = null;
-    camera = undefined;
-    dragState = null;
-    // A new history, not a push onto the old one: otherwise ⌘Z after an
-    // open brings back the previous document, and a ⌘S then writes it
-    // over the file that was just opened.
-    currentSnapshot = cloneTree(root);
-    savedSnapshot = path ? currentSnapshot : null;
-    history = createHistory(currentSnapshot);
-    render();
-  }
-
-  // Commits an open edit (its input commits on blur), so a save includes
-  // what is being typed.
-  function commitOpenEdit(): void {
-    if (editingId || notesEditingId || iconEditingId || linkEditingId) {
-      (document.activeElement as HTMLElement | null)?.blur();
-    }
-  }
-
-  // Save writes to the open file, or asks for a path if there is none;
-  // Save As always asks.
-  // Resolves to whether the map was saved (false if the dialog was
-  // cancelled or the write failed).
-  async function performSave(saveAs = false): Promise<boolean> {
-    commitOpenEdit();
-    const snapshot = currentSnapshot;
-    let savedPath: string | null;
-    try {
-      savedPath = await saveToFile(root, saveAs ? null : filePath);
-    } catch (err) {
-      await showError(`Could not save the map: ${err}`);
-      return false;
-    }
-    if (!savedPath) return false;
-    filePath = savedPath;
-    savedSnapshot = snapshot;
-    addRecentFile(savedPath);
-    onChange?.();
-    return true;
-  }
-
-  async function performOpen(): Promise<void> {
-    if (!(await canDiscardChanges())) return;
-    // A file that can't be read, or whose JSON isn't a mind map, must leave
-    // the current document alone rather than half-replacing it.
-    const result = await loadFromFile().catch(() => null);
-    if (result) {
-      loadRoot(result.root, result.path);
-      addRecentFile(result.path);
-    }
-  }
-
-  async function performImportMarkdown(): Promise<void> {
-    // The whole flow (including the dialog itself) is wrapped, not just the
-    // file read — same shape as performOpen(): a failure at any step must
-    // leave the current document alone rather than half-replacing it, and
-    // must not surface as an unhandled rejection.
-    if (!(await canDiscardChanges())) return;
-    const path = await open({ multiple: false, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(
-      () => null,
-    );
-    if (!path || Array.isArray(path)) return;
-    const importedRoot = await readTextFile(path).then(fromMarkdown).catch(() => null);
-    if (importedRoot) {
-      loadRoot(importedRoot, null);
-      addRecentFile(path);
-    }
-  }
-
-  async function performOpenRecent(path: string): Promise<boolean> {
-    if (!(await canDiscardChanges())) return true;
-    // Imported Markdown files are in the recent list too, and they are not
-    // JSON, so they go through the importer again, not loadFromPath.
-    if (path.toLowerCase().endsWith(".md")) {
-      const importedRoot = await readTextFile(path).then(fromMarkdown).catch(() => null);
-      if (!importedRoot) return false;
-      loadRoot(importedRoot, null);
-      addRecentFile(path);
-      return true;
-    }
-    const result = await loadFromPath(path).catch(() => null);
-    if (!result) return false;
-    loadRoot(result.root, result.path);
-    addRecentFile(result.path);
-    return true;
-  }
-
-  async function performExport(): Promise<void> {
-    const svgEl = canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
-    if (!svgEl) return;
-    await exportMap(root, svgEl, lastContentBBox);
-  }
-
-  async function performPrint(): Promise<void> {
-    const svgEl = canvasEl.querySelector<SVGSVGElement>("svg.mm-canvas");
-    if (!svgEl) return;
-    await printMap(svgEl, lastContentBBox);
-  }
-
-  // The element under the cursor during a node drag, if it's a valid
-  // reparent target — not the dragged node itself, and not one of its own
-  // descendants (that would create a cycle).
-  function findDropTargetId(clientX: number, clientY: number, draggedId: string): string | null {
-    // jsdom (used by tests) doesn't implement elementFromPoint at all — it
-    // throws rather than returning null, unlike a real browser.
-    let hit: Element | null;
-    try {
-      hit = document.elementFromPoint(clientX, clientY);
-    } catch {
-      return null;
-    }
-    const el = hit?.closest<HTMLElement>("[data-node-id]");
-    const id = el?.dataset.nodeId;
-    if (!id || id === draggedId) return null;
-    const draggedNode = findNode(root, draggedId)!;
-    if (findNode(draggedNode, id)) return null;
-    return id;
-  }
-
-  function performZoomToFit(): void {
-    camera = computeFitCamera(lastContentBBox, container.getBoundingClientRect());
-    render();
-  }
-
-  const ZOOM_STEP = 1.25;
-
-  function performZoomBy(factor: number): void {
-    if (!camera) return;
-    const rect = container.getBoundingClientRect();
-    zoomAround(camera, camera.scale * factor, rect.width / 2, rect.height / 2);
-  }
-
-  function performUndo(): void {
-    const snapshot = history.undo();
-    if (!snapshot) return;
-    currentSnapshot = snapshot;
-    root = cloneTree(snapshot);
-    selectOnly(null);
-    editingId = null;
-    render();
-  }
-
-  function performRedo(): void {
-    const snapshot = history.redo();
-    if (!snapshot) return;
-    currentSnapshot = snapshot;
-    root = cloneTree(snapshot);
-    selectOnly(null);
-    editingId = null;
-    render();
-  }
-
-  container.addEventListener("pointerdown", (e) => {
+  on("contextmenu", (e) => {
+    // An editor keeps the system menu (cut, copy, paste, spelling).
     if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
-    // A right-click (or Control-click) opens the context menu instead; see
-    // the contextmenu listener.
-    if (e.button === 2 || e.ctrlKey) return;
-    // Menus, popovers and the command palette handle their own clicks.
-    if ((e.target as Element).closest(".mm-popover, .mm-palette-backdrop")) return;
-
-    // A click on an editor panel's label must not end the edit: no focus
-    // change (preventDefault), and none of the canvas handling below.
-    if ((e.target as Element).closest(".mm-field-panel")) {
-      e.preventDefault();
-      return;
-    }
-
-    const linkBadge = (e.target as Element).closest(".mm-link-badge");
-    if (linkBadge) {
-      const nodeId = linkBadge.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      const node = nodeId ? findNode(root, nodeId) : null;
-      if (node?.link) void openLink(node.link);
-      return;
-    }
-    // Let toolbar buttons behave like normal buttons — don't preventDefault
-    // (which would suppress the click event they rely on) or treat this as
-    // a canvas pan.
-    // No preventDefault for the color input, which needs its own click,
-    // but buttons must not take keyboard focus from the map: Tab, Enter and
-    // the other shortcuts go to the map after a toolbar click.
-    if ((e.target as Element).closest(".mm-toolbar")) {
-      if ((e.target as Element).closest("button")) e.preventDefault();
-      return;
-    }
-    // Same reasoning: the minimap handles its own pointer events (click/drag
-    // to navigate) and shouldn't also fall through to canvas pan/selection.
-    if ((e.target as Element).closest(".mm-minimap")) return;
-    // The help panel closes on its own click; that click is not a canvas pan.
-    if ((e.target as Element).closest(".mm-help")) return;
-    // Suppress the browser's default mousedown focus handling: without
-    // this, when startEditing() below focuses a freshly-created <input>,
-    // the browser's own default action (targeting the original, now
-    // detached element) blurs it right back off a tick later, which
-    // immediately commits and closes the edit we just opened.
     e.preventDefault();
-    container.focus();
-    if (editingId || notesEditingId || iconEditingId || linkEditingId) return;
-
-    const notesBadge = (e.target as Element).closest(".mm-notes-badge");
-    if (notesBadge) {
-      const nodeId = notesBadge.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      if (nodeId) {
-        selectOnly(nodeId);
-        notesEditingId = nodeId;
-        render();
-      }
-      return;
-    }
-
-    const collapseToggle = (e.target as Element).closest(".mm-collapse-toggle");
-    if (collapseToggle) {
-      const nodeId = collapseToggle.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      // Option-click folds or opens every level below, as in macOS outline views.
-      if (nodeId) toggleFold(nodeId, e.altKey);
-      return;
-    }
-
-    const addBtn = (e.target as Element).closest(".mm-add-btn");
-    if (addBtn) {
-      const parentId = addBtn.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-      if (parentId) addNodeAndEdit(findNode(root, parentId)!);
-      return;
-    }
-
-    const nodeEl = (e.target as Element).closest<HTMLElement>("[data-node-id]");
-    if (nodeEl) {
-      const id = nodeEl.dataset.nodeId!;
-
-      // Native 'dblclick' can be unreliable once setPointerCapture is in
-      // play, so double-clicks are detected here from raw pointerdowns.
-      const isDoubleClick =
-        lastClick &&
-        lastClick.id === id &&
-        e.timeStamp - lastClick.time < DOUBLE_CLICK_MS &&
-        Math.abs(e.clientX - lastClick.x) < DOUBLE_CLICK_PX &&
-        Math.abs(e.clientY - lastClick.y) < DOUBLE_CLICK_PX;
-      lastClick = { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
-
-      if (isDoubleClick) {
-        lastClick = null;
-        startEditing(id);
-        return;
-      }
-
-      // Shift+click toggles multi-selection membership; a shift+drag on a
-      // node already in that selection moves every selected node together.
-      // A plain click always replaces the selection with just this node —
-      // same as before multi-select existed.
-      if (e.shiftKey && id !== root.id) {
-        if (selectedIds.has(id)) {
-          // Don't toggle off yet — deferred to pointerup so that dragging
-          // this node (see groupDrag below) moves the whole group instead
-          // of first shrinking it down to nothing.
-          pendingDeselectId = id;
-        } else {
-          selectedIds.add(id);
-        }
-        selectedId = id;
-      } else {
-        selectOnly(id);
-      }
-      nodeToolbarWanted = true;
-
-      if (id !== root.id) {
-        const groupDrag = selectedIds.has(id) && selectedIds.size > 1;
-        // A selected node under another selected node already moves with
-        // it (offsets apply to descendants), so moving it too would move it
-        // twice as far.
-        const idsToMove = groupDrag ? [...selectedIds].filter((nid) => !hasSelectedAncestor(nid)) : [id];
-        const startOffsets = new Map<string, { dx: number; dy: number }>();
-        for (const nid of idsToMove) {
-          const n = findNode(root, nid);
-          if (n) startOffsets.set(nid, { ...(n.offset ?? { dx: 0, dy: 0 }) });
-        }
-        dragState = { type: "node", id, startX: e.clientX, startY: e.clientY, startOffsets };
-      }
-      render();
-    } else {
-      lastClick = null;
-      selectOnly(null);
+    if (isEditing()) return;
+    const id = nodeIdOf(e.target as Element);
+    if (id) {
+      if (!selectedIds.has(id)) selectOnly(id);
+      else selectedId = id;
       nodeToolbarWanted = false;
-      dragState = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
-      render();
-    }
-    try {
-      container.setPointerCapture?.(e.pointerId);
-    } catch {
-      // No active pointer with this id (e.g. a synthetic event) — harmless.
+      showSelection();
+      contextMenu.show(e.clientX, e.clientY, nodeMenuEntries());
+    } else {
+      contextMenu.show(e.clientX, e.clientY, canvasMenuEntries());
     }
   });
 
+  on("pointerdown", (e) => {
+    const target = e.target as Element;
+    if (["INPUT", "TEXTAREA"].includes((target as HTMLElement).tagName)) return;
+    // A right-click (or Control-click) opens the context menu instead.
+    if (e.button === 2 || e.ctrlKey) return;
+    // Menus, popovers and the palette handle their own clicks.
+    if (target.closest(".mm-popover, .mm-palette-backdrop, .mm-minimap, .mm-help")) return;
+    // A click on an editor panel's label must not end the edit.
+    if (target.closest(".mm-field-panel")) return e.preventDefault();
+    const linkBadge = target.closest(".mm-link-badge");
+    if (linkBadge) {
+      const link = findNode(doc.root, nodeIdOf(linkBadge) ?? "")?.link;
+      if (link) void openLink(link);
+      return;
+    }
+    // Toolbar buttons must not take keyboard focus from the map, or Tab,
+    // Enter and the other shortcuts stop working after a click on them.
+    if (target.closest(".mm-toolbar")) {
+      if (target.closest("button")) e.preventDefault();
+      return;
+    }
+    // Without this, when a double-click opens the title editor and
+    // focuses it, the browser's own mousedown handling (aimed at the
+    // element that render just removed) takes the focus back a moment
+    // later, which commits and closes the edit at once.
+    e.preventDefault();
+    container.focus();
+    if (isEditing()) return;
+
+    const notesBadge = target.closest(".mm-notes-badge");
+    if (notesBadge) {
+      const id = nodeIdOf(notesBadge);
+      if (id) {
+        selectOnly(id);
+        openEditor("notes", id);
+      }
+      return;
+    }
+    const foldControl = target.closest(".mm-collapse-toggle");
+    if (foldControl) {
+      // Option-click folds or opens every level below, as in macOS outline views.
+      const id = nodeIdOf(foldControl);
+      if (id) toggleFold(id, e.altKey);
+      return;
+    }
+    const addButton = target.closest(".mm-add-btn");
+    if (addButton) {
+      const parent = findNode(doc.root, nodeIdOf(addButton) ?? "");
+      if (parent) addNodeAndEdit(parent);
+      return;
+    }
+
+    const id = nodeIdOf(target);
+    if (!id) {
+      lastClick = null;
+      selectOnly(null);
+      nodeToolbarWanted = false;
+      drag = { type: "pan", startX: e.clientX, startY: e.clientY, startCamera: { ...camera! } };
+      showSelection();
+      capturePointer(e);
+      return;
+    }
+
+    // Double-clicks come from pointerdown timing: the native dblclick is
+    // unreliable once the container captures the pointer for drags.
+    const isDoubleClick =
+      lastClick?.id === id &&
+      e.timeStamp - lastClick.time < DOUBLE_CLICK_MS &&
+      Math.abs(e.clientX - lastClick.x) < DOUBLE_CLICK_PX &&
+      Math.abs(e.clientY - lastClick.y) < DOUBLE_CLICK_PX;
+    lastClick = isDoubleClick ? null : { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
+    if (isDoubleClick) return openEditor("title", id);
+
+    // Shift+click adds or removes a node from the selection; removing waits
+    // for pointerup, so a shift+drag on a selected node moves the group.
+    if (e.shiftKey && id !== doc.root.id) {
+      if (selectedIds.has(id)) pendingDeselectId = id;
+      else selectedIds.add(id);
+      selectedId = id;
+    } else {
+      selectOnly(id);
+    }
+    nodeToolbarWanted = true;
+    if (id !== doc.root.id) startNodeDrag(id, e);
+    showSelection();
+    capturePointer(e);
+  });
+
+  function capturePointer(e: PointerEvent): void {
+    try {
+      container.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No active pointer with this id (a synthetic event).
+    }
+  }
+
+  function startNodeDrag(id: string, e: PointerEvent): void {
+    // A group drag moves every selected node but the root (moving the root
+    // moves the whole map) and but a node under another selected node
+    // (offsets apply to descendants, so it would move twice).
+    const groupDrag = selectedIds.has(id) && selectedIds.size > 1;
+    const ids = groupDrag ? selectedNonRoot().filter((nid) => !hasSelectedAncestor(nid)) : [id];
+    const moving = new Map<MindMapNode, { dx: number; dy: number }>();
+    const drawn = new Set<string>();
+    for (const nid of ids) {
+      const node = findNode(doc.root, nid);
+      if (!node) continue;
+      moving.set(node, { ...(node.offset ?? { dx: 0, dy: 0 }) });
+      for (const n of visibleNodes(node)) drawn.add(n.id);
+    }
+    drag = { type: "node", id, startX: e.clientX, startY: e.clientY, moving, drawn };
+  }
+
+  // Pointer events can come faster than the screen refreshes, so the drag
+  // updates at most once per animation frame.
   let pendingDragFrame: number | null = null;
   function cancelDragFrame(): void {
     if (pendingDragFrame !== null) cancelAnimationFrame(pendingDragFrame);
     pendingDragFrame = null;
   }
 
-  container.addEventListener("pointermove", (e) => {
-    if (!dragState) return;
-    const dxPx = e.clientX - dragState.startX;
-    const dyPx = e.clientY - dragState.startY;
-
-    if (dragState.type === "node") {
-      if (dxPx === 0 && dyPx === 0) return;
-      dragMoved = true;
-      for (const [nid, startOffset] of dragState.startOffsets) {
-        const n = findNode(root, nid);
-        if (n) {
-          n.offset = {
-            dx: startOffset.dx + dxPx / camera!.scale,
-            dy: startOffset.dy + dyPx / camera!.scale,
-          };
-        }
-      }
-      // Reparent-by-drop only applies to a single dragged node — dropping a
-      // multi-node group onto one target would have to reparent every
-      // selected node onto it at once, which risks ambiguous nesting and
-      // cycles (e.g. a selected node being an ancestor of the target), so
-      // group drags just reposition instead.
-      const singleDrag = dragState.startOffsets.size === 1 && dragState.startOffsets.has(dragState.id);
-      dropTargetId = singleDrag ? findDropTargetId(e.clientX, e.clientY, dragState.id) : null;
-      // Pointer events can come faster than the screen refreshes, and a
-      // full render takes ~27-41ms at 300 nodes, so renders are coalesced
-      // to at most one per animation frame.
-      pendingDragFrame ??= requestAnimationFrame(() => {
-        pendingDragFrame = null;
-        render();
-      });
-    } else {
-      camera = { ...dragState.startCamera, x: dragState.startCamera.x + dxPx, y: dragState.startCamera.y + dyPx };
-      // Panning, like zooming, moves the camera and nothing else, so it gets
-      // the same one-attribute fast path — see zoomAroundLive for why a full
-      // render per event is worth avoiding. (No edit overlay can be up here:
-      // pointerdown bails out while one is, so a pan never starts mid-edit.)
-      if (!applyCamera(canvasEl, camera)) render();
+  on("pointermove", (e) => {
+    if (!drag) return;
+    const dxPx = e.clientX - drag.startX;
+    const dyPx = e.clientY - drag.startY;
+    if (drag.type === "pan") {
+      camera = { ...drag.startCamera, x: drag.startCamera.x + dxPx, y: drag.startCamera.y + dyPx };
+      return showCamera();
     }
+    if (dxPx === 0 && dyPx === 0) return;
+    if (!dragMoved) {
+      dragMoved = true;
+      nodeToolbar.update(null);
+      drag.preview = startDragPreview(canvasEl, drag.drawn, lastPositions, getViewPrefs().edgeStyle);
+    }
+    const scale = camera!.scale;
+    for (const [node, start] of drag.moving) node.offset = { dx: start.dx + dxPx / scale, dy: start.dy + dyPx / scale };
+    // Dropping onto another node reparents a single dragged node; a group
+    // only moves (dropping several nodes onto one risks cycles).
+    const single = drag.moving.size === 1 ? [...drag.moving.keys()][0] : null;
+    dropTargetId = single ? findDropTargetId(e.clientX, e.clientY, single) : null;
+    const current = drag;
+    pendingDragFrame ??= requestAnimationFrame(() => {
+      pendingDragFrame = null;
+      if (current.preview) {
+        current.preview.move(dxPx / scale, dyPx / scale);
+        setDropTarget(canvasEl, dropTargetId);
+      } else {
+        render();
+      }
+    });
   });
 
-  container.addEventListener("pointerup", () => {
-    if (!dragState) return;
+  // The node under the pointer during a drag, if the dragged node may be
+  // dropped onto it: not the node itself, and not one of its descendants
+  // (that would make a cycle).
+  function findDropTargetId(clientX: number, clientY: number, dragged: MindMapNode): string | null {
+    let hit: Element | null;
+    try {
+      hit = document.elementFromPoint(clientX, clientY);
+    } catch {
+      return null; // jsdom has no elementFromPoint
+    }
+    const id = nodeIdOf(hit);
+    if (!id || id === dragged.id || findNode(dragged, id)) return null;
+    return id;
+  }
+
+  on("pointerup", () => {
+    if (!drag) return;
     cancelDragFrame();
-    // A node drag mutates the tree (offset, or a reparent), so it's one
-    // undo step — but only if it actually moved. A plain click never
-    // dispatches a pointermove, and recording it would bury real edits
-    // under identical snapshots, so ⌘Z would appear to do nothing until
-    // you'd pressed it once per intervening click.
-    if (dragState.type === "node" && dragMoved) {
-      if (dropTargetId) reparentNode(root, dragState.id, dropTargetId);
-      commit();
-    } else if (dragState.type === "node" && pendingDeselectId) {
-      // A plain (non-dragging) shift+click on an already-selected node —
-      // now it's safe to toggle it off without breaking a group drag.
+    const finished = drag;
+    drag = null;
+    if (finished.type === "node" && dragMoved) {
+      // One undo step for the move or the reparent. A plain click records
+      // nothing, or ⌘Z would seem to do nothing until pressed once per click.
+      if (dropTargetId) {
+        const target = findNode(doc.root, dropTargetId);
+        reparentNode(doc.root, finished.id, dropTargetId);
+        // A node dropped onto a folded branch opens it, so the node stays
+        // in sight.
+        if (target) target.collapsed = false;
+      }
+      doc.commit();
+      dragMoved = false;
+      dropTargetId = null;
+      return render();
+    }
+    dragMoved = false;
+    dropTargetId = null;
+    if (finished.type === "node" && pendingDeselectId) {
       selectedIds.delete(pendingDeselectId);
       if (selectedId === pendingDeselectId) selectedId = [...selectedIds][0] ?? null;
+      pendingDeselectId = null;
+      return showSelection();
     }
     pendingDeselectId = null;
-    dragState = null;
-    dragMoved = false;
-    dropTargetId = null;
-    render();
+    updateFloatingControls();
   });
-  container.addEventListener("pointercancel", () => {
+
+  on("pointercancel", () => {
     cancelDragFrame();
-    // The system took the pointer away mid-drag (e.g. a gesture), so the
-    // move never finished: put the nodes back, with no undo step.
-    if (dragState?.type === "node" && dragMoved) {
-      for (const [nid, start] of dragState.startOffsets) {
-        const n = findNode(root, nid);
-        if (n) n.offset = start.dx === 0 && start.dy === 0 ? undefined : start;
-      }
+    // The system took the pointer mid-drag: put the nodes back, with no
+    // undo step.
+    if (drag?.type === "node" && dragMoved) {
+      for (const [node, start] of drag.moving) node.offset = start.dx === 0 && start.dy === 0 ? undefined : start;
     }
     pendingDeselectId = null;
-    dragState = null;
+    drag = null;
     dragMoved = false;
     dropTargetId = null;
     render();
   });
 
-  // Pastes an image from the clipboard onto the selected node. Container-
-  // scoped like the pointer listeners above (not window), since paste
-  // targets whichever element currently has focus, and container.focus()
-  // is what this instance holds when active and not mid-edit.
-  container.addEventListener("paste", (e) => {
+  // Pastes a clipboard image onto the selected node.
+  on("paste", (e) => {
     if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
-    if (!selectedId) return;
     const targetId = selectedId;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setImage(root, targetId, reader.result);
-          commit();
-          render();
-        }
-      };
-      reader.readAsDataURL(file);
-      break;
-    }
+    const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
+    const file = item?.getAsFile();
+    if (!targetId || !file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string" || !findNode(doc.root, targetId)) return;
+      setImage(doc.root, targetId, reader.result);
+      doc.commit();
+      render();
+    };
+    reader.readAsDataURL(file);
   });
 
-  // Multiplier applied to both wheel-driven and native pinch-gesture zoom
-  // deltas so a pinch covers more zoom range per finger movement — plain
-  // 1:1 tracking of the OS-reported deltas felt too slow.
-  const PINCH_ZOOM_SENSITIVITY = 1.6;
+  // ----- Zoom gestures -----
 
-  // Moves the camera so that the point at (anchorX, anchorY) in the *base*
-  // camera (before this zoom) stays under that same screen point afterward.
-  function cameraZoomedAround(
-    baseCamera: Camera,
-    targetScale: number,
-    anchorX: number,
-    anchorY: number,
-  ): Camera {
-    const scale = clamp(targetScale, ZOOM_MIN, ZOOM_MAX);
-    const worldX = (anchorX - baseCamera.x) / baseCamera.scale;
-    const worldY = (anchorY - baseCamera.y) / baseCamera.scale;
-    return { scale, x: anchorX - worldX * scale, y: anchorY - worldY * scale };
-  }
-
-  // Discrete, one-shot zoom (toolbar buttons, ⌘= / ⌘-). One full render per
-  // press is fine — there's no frame budget to hold to.
-  function zoomAround(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
-    camera = cameraZoomedAround(baseCamera, targetScale, anchorX, anchorY);
-    render();
-  }
-
-  // Continuous zoom (trackpad pinch / wheel), where a full render per frame
-  // is what made the gesture feel uneven. Zooming changes nothing about the
-  // document — computeLayout's positions are world coordinates that don't
-  // depend on scale — yet render() tears down the whole SVG and rebuilds
-  // every node, re-measuring text through canvas and forcing a getBBox()
-  // reflow. Measured on a 79-node map that's ~48ms typical and up to
-  // ~180ms, versus ~0ms to rewrite the one transform attribute. The
-  // accumulated deltas mean the *total* zoom came out right either way, but
-  // an over-budget frame lets the next batch of wheel/gesture events pile
-  // up, so each visible step jumped by however long the previous render
-  // happened to take — hence "sometimes too much, sometimes not much".
-  function zoomAroundLive(baseCamera: Camera, targetScale: number, anchorX: number, anchorY: number): void {
-    camera = cameraZoomedAround(baseCamera, targetScale, anchorX, anchorY);
-    // The inline edit overlays are HTML elements positioned in *screen*
-    // coordinates derived from the camera, so they're the one thing the SVG
-    // transform doesn't carry along — keep the full render while one is up.
-    const isEditing = editingId || notesEditingId || iconEditingId || linkEditingId;
-    if (isEditing || !applyCamera(canvasEl, camera)) render();
-    else updateFloatingControls();
-  }
-
-  // Trackpad pinch on Chromium (incl. our own dev-server test target)
-  // delivers ctrlKey wheel events at a much higher rate than the browser can
-  // usefully re-render — same issue as WebKit's gesturechange below.
-  // Rendering synchronously per event made this choppy, so deltas are
-  // accumulated and applied as a single zoomAround once per animation
-  // frame, relative to a base camera snapshotted at the start of that
-  // batch (not the live `camera`, which the pending frame hasn't updated
-  // yet — reading it mid-batch would silently drop the earlier deltas).
-  let pendingWheelFrame: number | null = null;
-  let wheelBaseCamera: Camera | null = null;
-  let wheelAccumScale = 1;
-  let wheelAnchorX = 0;
-  let wheelAnchorY = 0;
-  container.addEventListener(
+  // Wheel and Chromium pinch (wheel with ctrlKey) come faster than a frame,
+  // so their deltas add up and apply once per frame, against the camera at
+  // the start of that frame's batch.
+  let wheelFrame: number | null = null;
+  let wheelBase: Camera | null = null;
+  let wheelScale = 1;
+  let wheelAnchor = { x: 0, y: 0 };
+  on(
     "wheel",
     (e) => {
       e.preventDefault();
       if (!camera) return;
       const rect = container.getBoundingClientRect();
-      wheelAnchorX = e.clientX - rect.left;
-      wheelAnchorY = e.clientY - rect.top;
-      if (pendingWheelFrame === null) {
-        wheelBaseCamera = camera;
-        wheelAccumScale = 1;
+      wheelAnchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      if (wheelFrame === null) {
+        wheelBase = camera;
+        wheelScale = 1;
       }
-      wheelAccumScale *= Math.pow(1.0015, -wheelDeltaPixels(e, rect.height) * PINCH_ZOOM_SENSITIVITY);
-      if (pendingWheelFrame === null) {
-        pendingWheelFrame = requestAnimationFrame(() => {
-          pendingWheelFrame = null;
-          zoomAroundLive(wheelBaseCamera!, wheelBaseCamera!.scale * wheelAccumScale, wheelAnchorX, wheelAnchorY);
-        });
-      }
+      wheelScale *= Math.pow(1.0015, -wheelDeltaPixels(e, rect.height) * PINCH_ZOOM_SENSITIVITY);
+      wheelFrame ??= requestAnimationFrame(() => {
+        wheelFrame = null;
+        zoomLive(wheelBase!, wheelBase!.scale * wheelScale, wheelAnchor.x, wheelAnchor.y);
+      });
     },
     { passive: false },
   );
 
-  // Safari/WKWebView (the real desktop app on macOS) reports trackpad pinch
-  // as these WebKit-only gesture events, not as wheel events with ctrlKey
-  // the way Chromium does — so pinch-to-zoom needs its own handler or it
-  // silently does nothing (or triggers the webview's own native page zoom,
-  // since nothing here would preventDefault it). `scale` on these events is
-  // cumulative since gesturestart, not incremental, so the base camera is
-  // snapshotted once at gesturestart and every gesturechange recomputes
-  // from that same snapshot rather than compounding on the live camera.
-  let gestureBaseCamera: Camera | null = null;
-  // gesturechange fires far more often than the browser can usefully
-  // re-render (much higher rate than wheel ticks) — rendering synchronously
-  // on every single event is what made pinch feel choppy, since this app
-  // rebuilds the whole SVG from scratch per render. Coalescing to at most
-  // one render per animation frame fixes that without changing the math.
-  let pendingGestureFrame: number | null = null;
-  container.addEventListener("gesturestart", ((e: Event) => {
+  // WKWebView (the macOS app) reports a trackpad pinch as WebKit gesture
+  // events, not wheel events. Their scale is cumulative since
+  // gesturestart, so each change starts from the camera at that moment.
+  let gestureBase: Camera | null = null;
+  let gestureFrame: number | null = null;
+  const onGesture = (type: string, listener: (e: Event) => void) =>
+    container.addEventListener(type, listener, { signal });
+  onGesture("gesturestart", (e) => {
     e.preventDefault();
-    gestureBaseCamera = camera ? { ...camera } : null;
-  }) as EventListener);
-  container.addEventListener("gesturechange", ((e: Event) => {
+    gestureBase = camera ? { ...camera } : null;
+  });
+  onGesture("gesturechange", (e) => {
     e.preventDefault();
     const ge = e as unknown as { scale: number; clientX: number; clientY: number };
-    const base = gestureBaseCamera;
+    const base = gestureBase;
     if (!base) return;
     const rect = container.getBoundingClientRect();
     const targetScale = base.scale * Math.pow(ge.scale, PINCH_ZOOM_SENSITIVITY);
-    const anchorX = ge.clientX - rect.left;
-    const anchorY = ge.clientY - rect.top;
-    if (pendingGestureFrame !== null) cancelAnimationFrame(pendingGestureFrame);
-    pendingGestureFrame = requestAnimationFrame(() => {
-      pendingGestureFrame = null;
-      zoomAroundLive(base, targetScale, anchorX, anchorY);
+    const anchor = { x: ge.clientX - rect.left, y: ge.clientY - rect.top };
+    if (gestureFrame !== null) cancelAnimationFrame(gestureFrame);
+    gestureFrame = requestAnimationFrame(() => {
+      gestureFrame = null;
+      zoomLive(base, targetScale, anchor.x, anchor.y);
     });
-  }) as EventListener);
-  container.addEventListener("gestureend", ((e: Event) => {
+  });
+  onGesture("gestureend", (e) => {
     e.preventDefault();
-    gestureBaseCamera = null;
-  }) as EventListener);
+    gestureBase = null;
+  });
+
+  // ----- Window -----
 
   let lastRect = container.getBoundingClientRect();
-  const onWindowResize = () => {
-    if (!isActive) return;
-    const rect = container.getBoundingClientRect();
-    if (camera) {
-      camera = {
-        ...camera,
-        x: camera.x + (rect.width - lastRect.width) / 2,
-        y: camera.y + (rect.height - lastRect.height) / 2,
-      };
-    }
-    lastRect = rect;
-    render();
-  };
-  window.addEventListener("resize", onWindowResize);
-
-  const onWindowKeyDown = (e: KeyboardEvent) => {
-    if (!isActive) return;
-    // Keys pressed in a menu or popover (arrow keys, Enter on an item) are
-    // for that menu, not the map.
-    if ((e.target as Element | null)?.closest?.(".mm-popover, .mm-palette-backdrop")) return;
-    // Keyboard work hides the node toolbar; a click on a node brings it back.
-    if (!["Shift", "Meta", "Control", "Alt"].includes(e.key) && !e.metaKey && !e.ctrlKey && nodeToolbarWanted) {
-      nodeToolbarWanted = false;
-      nodeToolbar.update(null);
-    }
-    // Global safety net: Escape always exits editing, even if the edit
-    // input itself never picked up focus for some reason.
-    if (e.key === "Escape" && (editingId || notesEditingId || iconEditingId || linkEditingId)) {
-      e.preventDefault();
-      cancelTitleEdit();
-      notesEditingId = null;
-      iconEditingId = null;
-      linkEditingId = null;
+  window.addEventListener(
+    "resize",
+    () => {
+      if (!isActive) return;
+      const rect = container.getBoundingClientRect();
+      // Keep the map's center where it was.
+      if (camera) {
+        camera = { ...camera, x: camera.x + (rect.width - lastRect.width) / 2, y: camera.y + (rect.height - lastRect.height) / 2 };
+      }
+      lastRect = rect;
+      viewportSize = null;
       render();
-      container.focus();
-      return;
-    }
+    },
+    { signal },
+  );
 
-    const isEditingAnything = editingId || notesEditingId || iconEditingId || linkEditingId;
-    const cmd = e.metaKey || e.ctrlKey;
-    // While editing, do nothing at all here (crucially, no preventDefault)
-    // so the input's own native undo handles text edits instead.
-    if (cmd && e.key.toLowerCase() === "z" && !isEditingAnything) {
-      e.preventDefault();
-      if (e.shiftKey) performRedo();
-      else performUndo();
-      return;
-    }
-    if (cmd && e.key.toLowerCase() === "s") {
-      e.preventDefault();
-      void performSave(e.shiftKey);
-      return;
-    }
-    if (cmd && e.key.toLowerCase() === "o") {
-      e.preventDefault();
-      void performOpen();
-      return;
-    }
-    if (cmd && e.key.toLowerCase() === "k" && !isEditingAnything) {
-      e.preventDefault();
-      contextMenu.close();
-      palette.open();
-      return;
-    }
-    if (cmd && e.key.toLowerCase() === "f" && !isEditingAnything) {
-      e.preventDefault();
-      searchBar.open();
-      return;
-    }
-    if (cmd && (e.key === "=" || e.key === "+")) {
-      e.preventDefault();
-      performZoomBy(ZOOM_STEP);
-      return;
-    }
-    if (cmd && e.key === "-") {
-      e.preventDefault();
-      performZoomBy(1 / ZOOM_STEP);
-      return;
-    }
-
-    if (isEditingAnything) return;
-
-    if (e.key === "?") {
-      e.preventDefault();
-      help.toggle();
-      return;
-    }
-    if (e.key === "Escape" && help.isOpen()) {
-      e.preventDefault();
-      help.close();
-      return;
-    }
-
-    if (e.key === "n" || e.key === "i" || e.key === "l") {
-      if (!selectedId) return;
-      e.preventDefault();
-      openFieldEditor(e.key === "n" ? "notes" : e.key === "i" ? "icon" : "link");
-    } else if (e.key === "t") {
-      if (!selectedId) return;
-      e.preventDefault();
-      cycleSelectedStatus();
-    } else if (e.key === "0") {
-      e.preventDefault();
-      performZoomToFit();
-    } else if (e.key === "f") {
-      e.preventDefault();
-      toggleFocus();
-    } else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      e.preventDefault();
-      if (!selectedId) return;
-      if (moveSibling(root, selectedId, e.key === "ArrowDown" ? 1 : -1)) {
-        commit();
-        render();
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (!isActive) return;
+      // Keys pressed in a menu, popover or the palette are theirs.
+      if ((e.target as Element | null)?.closest?.(".mm-popover, .mm-palette-backdrop")) return;
+      // Keyboard work hides the node toolbar; a click on a node brings it
+      // back.
+      if (!e.metaKey && !e.ctrlKey && !["Shift", "Meta", "Control", "Alt"].includes(e.key) && nodeToolbarWanted) {
+        nodeToolbarWanted = false;
+        nodeToolbar.update(null);
       }
-    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.preventDefault();
-      if (!selectedId) {
-        selectOnly(root.id);
-        render();
-        return;
+      if (e.key === "Escape") {
+        // A safety net: Escape always ends an edit, even if its field never
+        // got focus.
+        if (isEditing()) {
+          e.preventDefault();
+          return cancelEditor();
+        }
+        if (help.isOpen()) {
+          e.preventDefault();
+          return help.close();
+        }
       }
-      const parent = findParent(root, selectedId);
-      if (!parent) return;
-      const siblings = parent.children;
-      const index = siblings.findIndex((n) => n.id === selectedId);
-      const nextIndex = clamp(index + (e.key === "ArrowDown" ? 1 : -1), 0, siblings.length - 1);
-      selectOnly(siblings[nextIndex].id);
-      render();
-    } else if (e.key === "ArrowLeft") {
+      const command = commands.forKey(e, isEditing());
+      if (!command) return;
       e.preventDefault();
-      if (!selectedId) return;
-      const parent = findParent(root, selectedId);
-      if (parent) {
-        selectOnly(parent.id);
-        render();
-      }
-    } else if (e.key === ".") {
-      e.preventDefault();
-      if (selectedId) toggleFold(selectedId, e.altKey);
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      const node = selectedId ? findNode(root, selectedId) : root;
-      // On a folded node, Right opens it, as in a tree view.
-      if (node?.collapsed) toggleFold(node.id);
-      else if (node && node.children.length > 0) {
-        selectOnly(node.children[0].id);
-        render();
-      }
-    } else if (e.key === "Tab") {
-      e.preventDefault();
-      addChildToSelection();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      addSiblingToSelection();
-    } else if (e.key === "F2" || e.key === " ") {
-      if (!selectedId) return;
-      e.preventDefault();
-      startEditing(selectedId);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      if (![...selectedIds].some((id) => id !== root.id)) return;
-      e.preventDefault();
-      deleteSelection();
-    }
-  };
-  window.addEventListener("keydown", onWindowKeyDown);
+      command.run();
+    },
+    { signal },
+  );
 
   render();
   container.focus();
 
   return {
+    run(id) {
+      commands.run(id);
+      if (!isEditing() && !searchBar.isOpen()) container.focus();
+    },
     openRoot: loadRoot,
     setActive(active) {
       isActive = active;
       if (active) container.focus();
     },
-    getTitle: () => root.text,
-    forceRender: () => render(),
-    destroy() {
-      isActive = false;
-      window.removeEventListener("resize", onWindowResize);
-      window.removeEventListener("keydown", onWindowKeyDown);
-    },
-    isDirty,
-    getFilePath: () => filePath,
-    open: () => void performOpen(),
-    save: () => void performSave(),
-    saveAs: () => void performSave(true),
-    openRecent: (path) => performOpenRecent(path),
-    importMarkdown: () => void performImportMarkdown(),
-    exportFile: () => void performExport(),
-    print: () => void performPrint(),
+    getTitle: () => doc.root.text,
+    forceRender: render,
+    destroy: () => lifetime.abort(),
+    isDirty: () => doc.isDirty(),
+    getFilePath: () => doc.filePath,
+    openRecent,
+    flushEdit,
     confirmClose: canDiscardChanges,
-    arrange() {
-      arrange();
-      container.focus();
-    },
-    toggleFocus() {
-      toggleFocus();
-      container.focus();
-    },
-    openSearch: () => searchBar.open(),
     isFocused: () => focusId !== null,
-    canFocus: () => !!selectedId && selectedId !== root.id,
+    canFocus: () => isEnabled(commands.get("node.focus")),
   };
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-// One text line's worth of scroll, for normalizing line-mode wheel deltas.
-const WHEEL_LINE_HEIGHT = 16;
-
-// Trackpads and Chromium-based webviews report wheel deltas in pixels, but a
-// discrete mouse wheel can report lines (WebKitGTK) or pages instead, where
-// one full notch is a single-digit deltaY. Taken as pixels that's a ~0.5%
-// zoom step, i.e. a zoom that looks broken, so convert to pixels first.
+// Trackpads report wheel deltas in pixels, but a mouse wheel can report
+// lines or pages, where one notch is a single-digit delta.
 function wheelDeltaPixels(e: WheelEvent, viewportHeight: number): number {
   if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * WHEEL_LINE_HEIGHT;
   if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * viewportHeight;

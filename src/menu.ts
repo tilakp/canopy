@@ -9,6 +9,15 @@ export interface PopoverHandle {
   isOpen(): boolean;
 }
 
+export interface PopoverOptions {
+  align: "start" | "center" | "end";
+  // Fills or refreshes the panel just before it shows.
+  onOpen?: () => void;
+  // Ends the popover's document listeners, for a popover that belongs to a
+  // map: without it a closed map stays in memory through them.
+  signal?: AbortSignal;
+}
+
 // The panel goes in `host` with position: fixed, placed from the anchor's
 // screen rect, not inside the anchor: the tab strip scrolls sideways, and
 // overflow on one axis clips the other too, so a panel inside it would be
@@ -18,8 +27,7 @@ export function attachPopover(
   host: HTMLElement,
   anchor: HTMLElement,
   panel: HTMLElement,
-  align: "start" | "center" | "end",
-  onOpen?: () => void,
+  { align, onOpen, signal }: PopoverOptions,
 ): PopoverHandle {
   panel.classList.add("mm-popover");
   panel.hidden = true;
@@ -68,14 +76,18 @@ export function attachPopover(
       const target = e.target as Node;
       if (!panel.hidden && !panel.contains(target) && !anchor.contains(target)) handle.close();
     },
-    true,
+    { capture: true, signal },
   );
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !panel.hidden) {
-      handle.close();
-      e.stopPropagation();
-    }
-  });
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape" && !panel.hidden) {
+        handle.close();
+        e.stopPropagation();
+      }
+    },
+    { signal },
+  );
   return handle;
 }
 
@@ -90,7 +102,9 @@ export interface MenuAction {
 export interface MenuSwatches {
   swatches: string[];
   active: string | null;
-  onPick(color: string): void;
+  // `final` is false while the system color picker is being dragged (a
+  // preview) and true for a pick that should be kept as one undo step.
+  onPick(color: string, final: boolean): void;
 }
 
 export type MenuEntry = MenuAction | MenuSwatches | "separator";
@@ -143,7 +157,7 @@ export function swatchRow(entry: MenuSwatches, close: () => void): HTMLElement {
     btn.dataset.active = String(color.toLowerCase() === entry.active?.toLowerCase());
     btn.addEventListener("click", () => {
       close();
-      entry.onPick(color);
+      entry.onPick(color, true);
     });
     row.appendChild(btn);
   }
@@ -157,7 +171,8 @@ export function swatchRow(entry: MenuSwatches, close: () => void): HTMLElement {
   input.type = "color";
   input.setAttribute("aria-label", "Custom branch color");
   if (entry.active) input.value = entry.active;
-  input.addEventListener("input", () => entry.onPick(input.value));
+  input.addEventListener("input", () => entry.onPick(input.value, false));
+  input.addEventListener("change", () => entry.onPick(input.value, true));
   custom.appendChild(input);
   row.appendChild(custom);
   return row;
@@ -175,7 +190,13 @@ export function moveMenuFocus(panel: HTMLElement, e: KeyboardEvent): void {
 }
 
 // A menu at the pointer (right-click), kept inside the window.
-export function createContextMenu(host: HTMLElement): { show(x: number, y: number, entries: MenuEntry[]): void; close(): void; isOpen(): boolean } {
+export interface ContextMenu {
+  show(x: number, y: number, entries: MenuEntry[]): void;
+  close(): void;
+  isOpen(): boolean;
+}
+
+export function createContextMenu(host: HTMLElement, signal?: AbortSignal): ContextMenu {
   const panel = document.createElement("div");
   panel.className = "mm-popover mm-context-menu";
   panel.hidden = true;
@@ -195,7 +216,7 @@ export function createContextMenu(host: HTMLElement): { show(x: number, y: numbe
     (e) => {
       if (!panel.hidden && !panel.contains(e.target as Node)) close();
     },
-    true,
+    { capture: true, signal },
   );
   return {
     show(x, y, entries) {

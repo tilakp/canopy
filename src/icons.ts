@@ -24,3 +24,15 @@ export const ICONS = {
   chevronUp: icon(`<path d="M4 10l4-4 4 4"/>`),
   chevronDown: icon(`<path d="M4 6l4 4 4-4"/>`),
 };
+
+// An icon-only button. Its label is its accessible name, and the tooltip
+// adds the shortcut.
+export function iconButton(icon: string, label: string, shortcut?: string, onClick?: () => void): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.className = "mm-icon-btn";
+  btn.innerHTML = icon;
+  btn.setAttribute("aria-label", label);
+  btn.title = shortcut ? `${label}  ${shortcut}` : label;
+  if (onClick) btn.addEventListener("click", onClick);
+  return btn;
+}

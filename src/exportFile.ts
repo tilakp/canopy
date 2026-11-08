@@ -2,7 +2,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import type { MindMapNode } from "./model";
 import { toMarkdown } from "./exportMarkdown";
-import { exportSvgString, exportPngDataUrl, type ContentBBox } from "./exportImage";
+import { exportSvgString, exportPngDataUrl } from "./exportImage";
+import type { Box } from "./camera";
 
 const EXPORT_FILTERS = [
   { name: "PNG image", extensions: ["png"] },
@@ -13,7 +14,7 @@ const EXPORT_FILTERS = [
 // Exports the current map to whichever format the user picks via the save
 // dialog's filename extension — one toolbar action covers all three so the
 // toolbar doesn't need a separate button per format.
-export async function exportMap(root: MindMapNode, svgEl: SVGSVGElement, contentBBox: ContentBBox): Promise<void> {
+export async function exportMap(root: MindMapNode, svgEl: SVGSVGElement, contentBBox: Box): Promise<void> {
   const path = await save({
     filters: EXPORT_FILTERS,
     defaultPath: `${root.text || "mindmap"}.png`,

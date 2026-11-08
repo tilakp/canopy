@@ -14,6 +14,16 @@ function buildSampleTree() {
   return root;
 }
 
+// The File menu's items (lib.rs install_menu) and the map commands they run.
+const MENU_COMMANDS: Record<string, string> = {
+  open: "file.open",
+  save: "file.save",
+  "save-as": "file.saveAs",
+  import: "file.import",
+  export: "file.export",
+  print: "file.print",
+};
+
 window.addEventListener("DOMContentLoaded", async () => {
   initTheme();
   initFontFamily();
@@ -44,13 +54,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Tauri listeners, these do nothing outside a real Tauri webview.
   listen<{ command: string; path: string | null }>("menu-command", async ({ payload }) => {
     const map = workspace.activeMap();
-    if (payload.command === "new") workspace.openInNewTab(createNode("Untitled"), null);
-    else if (payload.command === "open") map.open();
-    else if (payload.command === "save") map.save();
-    else if (payload.command === "save-as") map.saveAs();
-    else if (payload.command === "import") map.importMarkdown();
-    else if (payload.command === "export") map.exportFile();
-    else if (payload.command === "print") map.print();
+    const command = MENU_COMMANDS[payload.command];
+    if (command) map.run(command);
+    else if (payload.command === "new") workspace.openInNewTab(createNode("Untitled"), null);
     else if (payload.command === "open-recent" && payload.path) {
       if (!(await map.openRecent(payload.path))) removeRecentFile(payload.path);
     }

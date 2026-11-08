@@ -1,18 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { addChild, createNode } from "./model";
-import { renderMindMap, type RenderCallbacks } from "./render";
+import { renderMindMap } from "./render";
+import type { EditorCallbacks } from "./editors";
 import { exportSvgString } from "./exportImage";
 
-const noopCallbacks: RenderCallbacks = {
-  onEditCommit() {},
-  onEditCancel() {},
-  onNotesCommit() {},
-  onNotesCancel() {},
-  onIconCommit() {},
-  onIconCancel() {},
-  onLinkCommit() {},
-  onLinkCancel() {},
-};
+const noopCallbacks: EditorCallbacks = { onCommit() {}, onCancel() {} };
 
 function setup(): HTMLElement {
   const container = document.createElement("div");
@@ -29,7 +21,7 @@ describe("exportSvgString", () => {
     const root = createNode("Root");
     addChild(root, "Branch");
     const container = setup();
-    renderMindMap(container, root, { selectedIds: new Set(), editingId: null, edgeStyle: "curved" }, noopCallbacks);
+    renderMindMap(container, root, { selectedIds: new Set(), editor: null, edgeStyle: "curved" }, noopCallbacks);
 
     const svgEl = container.querySelector("svg.mm-canvas") as unknown as SVGSVGElement;
     const result = exportSvgString(svgEl, { x: -50, y: -50, width: 300, height: 200 });
@@ -52,7 +44,7 @@ describe("exportSvgString", () => {
     renderMindMap(
       container,
       root,
-      { selectedIds: new Set(), editingId: null, edgeStyle: "curved", camera: { x: 123, y: 45, scale: 1.7 } },
+      { selectedIds: new Set(), editor: null, edgeStyle: "curved", camera: { x: 123, y: 45, scale: 1.7 } },
       noopCallbacks,
     );
 
@@ -65,7 +57,7 @@ describe("exportSvgString", () => {
   it("sizes the viewBox from the given content bbox plus a margin", () => {
     const root = createNode("Root");
     const container = setup();
-    renderMindMap(container, root, { selectedIds: new Set(), editingId: null, edgeStyle: "curved" }, noopCallbacks);
+    renderMindMap(container, root, { selectedIds: new Set(), editor: null, edgeStyle: "curved" }, noopCallbacks);
 
     const svgEl = container.querySelector("svg.mm-canvas") as unknown as SVGSVGElement;
     const result = exportSvgString(svgEl, { x: 0, y: 0, width: 100, height: 50 });
@@ -82,3 +74,20 @@ describe("exportSvgString", () => {
 // canvas/getContext rather than implementing it (see textwrap.ts's
 // documented fallback), so there's nothing meaningful to assert here
 // beyond what exportSvgString already covers above.
+
+describe("exporting in dark mode", () => {
+  it("puts the dark canvas behind light text and leaves out the selection ring", async () => {
+    const { setTheme } = await import("./theme");
+    setTheme("dark");
+    const root = createNode("Root");
+    const child = addChild(root, "Child");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const result = renderMindMap(container, root, { selectedIds: new Set([child.id]), editor: null, edgeStyle: "curved" }, noopCallbacks);
+    const svg = exportSvgString(container.querySelector("svg.mm-canvas") as unknown as SVGSVGElement, result.contentBBox);
+    setTheme("light");
+    expect(svg).toContain('fill="#17171a"');
+    expect(svg).toContain('class="mm-root-text" text-anchor="middle" fill="#ededf0"');
+    expect(svg).not.toContain("mm-selection-ring");
+  });
+});

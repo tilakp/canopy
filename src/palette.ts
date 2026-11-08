@@ -1,9 +1,4 @@
-export interface Command {
-  label: string;
-  group: string;
-  shortcut?: string;
-  run(): void;
-}
+import { isEnabled, labelOf, shortcutOf, type Command } from "./commands";
 
 export interface PaletteHandle {
   open(): void;
@@ -15,12 +10,13 @@ export interface PaletteHandle {
 // a label that starts with the query, then one with a word that does, then
 // the rest, each in their original order.
 export function filterCommands(commands: Command[], query: string): Command[] {
+  commands = commands.filter((c) => !c.hidden && isEnabled(c));
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return commands;
   const q = query.trim().toLowerCase();
   const rank = (label: string) => (label.startsWith(q) ? 0 : label.split(/\s+/).some((w) => w.startsWith(q)) ? 1 : 2);
   return commands
-    .map((command, index) => ({ command, index, label: command.label.toLowerCase() }))
+    .map((command, index) => ({ command, index, label: labelOf(command).toLowerCase() }))
     .filter(({ label }) => words.every((w) => label.includes(w)))
     .sort((a, b) => rank(a.label) - rank(b.label) || a.index - b.index)
     .map(({ command }) => command);
@@ -88,11 +84,12 @@ export function createPalette(
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(i === index));
       const label = document.createElement("span");
-      label.textContent = command.label;
+      label.textContent = labelOf(command);
       item.appendChild(label);
-      if (command.shortcut) {
+      const shortcut = shortcutOf(command);
+      if (shortcut) {
         const key = document.createElement("kbd");
-        key.textContent = command.shortcut;
+        key.textContent = shortcut;
         item.appendChild(key);
       }
       item.addEventListener("pointerdown", (e) => e.preventDefault());
@@ -111,7 +108,7 @@ export function createPalette(
   function run(i: number): void {
     const command = shown[i];
     handle.close();
-    command?.run();
+    if (command && isEnabled(command)) command.run();
   }
 
   input.addEventListener("input", () => {

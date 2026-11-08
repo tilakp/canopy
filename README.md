@@ -120,7 +120,12 @@ small starter tree so you can jump straight into your own map.
 | `src/layout.ts` | Computes every node's position from the tree. |
 | `src/textwrap.ts` | Measures and wraps node text. |
 | `src/render.ts` | Draws the tree as SVG, including the hand-drawn "sketchy" style, multi-select highlighting, and focus-mode dimming. |
+| `src/visuals.ts`, `src/colors.ts`, `src/edges.ts`, `src/camera.ts` | Node sizes and styles, the palette and theme colors, line geometry, and the camera. |
+| `src/editors.ts` | The title, notes, icon and link editors. |
+| `src/motion.ts` | Nodes sliding to new places, and the drag preview. |
 | `src/app.ts` | Owns UI state and every event listener for one map. |
+| `src/commands.ts` | Every action, defined once, with its shortcut. |
+| `src/document.ts` | A map's tree, file, undo history and unsaved state. |
 | `src/titlebar.ts` / `src/workspace.ts` | The title bar (tabs, Arrange, Focus, Find, View, File) and multi-map coordination. |
 | `src/toolbar.ts` | The zoom control, the help button and the node toolbar. |
 | `src/menu.ts` | Popovers and the right-click menu. |

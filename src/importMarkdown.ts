@@ -26,7 +26,9 @@ export function fromMarkdown(text: string): MindMapNode {
 
     const bulletMatch = line.match(/^(\s*)[-*+]\s+(.+)$/);
     if (bulletMatch) {
-      const depth = Math.floor(bulletMatch[1].length / 2) + 1;
+      // A tab indents as much as two spaces, for outlines from editors that
+      // indent with tabs.
+      const depth = Math.floor(bulletMatch[1].replace(/\t/g, "  ").length / 2) + 1;
       while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop();
       // A task-list checkbox comes first, before the link check: in
       // "[ ] [Docs](url)" the link regex would otherwise take "[ ] [Docs"
@@ -61,16 +63,30 @@ function parseBullet(content: string): { text: string; icon?: string; link?: str
   let link: string | undefined;
   // The label may hold escaped brackets ("\[") but no bare "]", so text
   // that was escaped on export is not taken for a link.
-  const linkMatch = content.match(/^\[((?:\\.|[^\\\]])+)\]\((\S+)\)$/);
+  // A link target with spaces comes in angle brackets (CommonMark).
+  const linkMatch = content.match(/^\[((?:\\.|[^\\\]])+)\]\((?:<([^>]*)>|(\S+))\)$/);
   if (linkMatch) {
     label = linkMatch[1];
-    link = linkMatch[2];
+    link = linkMatch[2] ?? linkMatch[3];
   }
   label = unescapeMarkdown(label);
 
-  const iconMatch = label.match(/^(\p{Extended_Pictographic}\uFE0F?)\s+(.*)$/u);
-  if (iconMatch) return { text: iconMatch[2], icon: iconMatch[1], link };
+  const icon = leadingIcon(label);
+  if (icon) return { text: label.slice(icon.length).trimStart(), icon, link };
   return { text: label, link };
+}
+
+// A leading emoji or symbol followed by a space is the node's icon. It is
+// read as one grapheme, so an emoji built from several code points (a skin
+// tone, a family, a flag, a keycap) stays whole.
+// (An older WebKitGTK has no Intl.Segmenter: one code point then.)
+const graphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+function leadingIcon(label: string): string | null {
+  const first = graphemes
+    ? graphemes.segment(label)[Symbol.iterator]().next().value?.segment
+    : label.match(/^\p{Extended_Pictographic}\uFE0F?/u)?.[0];
+  if (!first || label[first.length] !== " ") return null;
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3|\p{So}/u.test(first) ? first : null;
 }
 
 // The inverse of exportMarkdown.ts's escapeMarkdown.

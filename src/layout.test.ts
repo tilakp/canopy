@@ -29,7 +29,7 @@ describe("computeLayout", () => {
     const { positions, edges } = computeLayout(root, fixedSize);
     expect(positions.size).toBe(1);
     expect(edges).toHaveLength(0);
-    expect(positions.get(root.id)).toMatchObject({ x: 0, y: 0, side: "root" });
+    expect(positions.get(root.id)).toMatchObject({ x: 0, y: 0, depth: 0 });
   });
 
   it("lays out 5 nodes with no overlapping siblings", () => {

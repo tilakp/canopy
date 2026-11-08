@@ -33,22 +33,22 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
     onSwitch: (id) => switchTo(id),
     onClose: (id) => void closeDoc(id),
     onNew: (root) => addDoc(root, null, true),
-    onArrange: () => active().arrange(),
-    onToggleFocus: () => active().toggleFocus(),
-    onFind: () => active().openSearch(),
+    onArrange: () => active().run("map.arrange"),
+    onToggleFocus: () => active().run("node.focus"),
+    onFind: () => active().run("map.find"),
     // macOS has these in its File menu (lib.rs); elsewhere the title bar
     // shows a File button.
     file: hasOverlayTitleBar()
       ? null
       : {
           onNew: () => addDoc(createNode("Untitled"), null, true),
-          onOpen: () => active().open(),
+          onOpen: () => active().run("file.open"),
           onOpenRecent: (path) => active().openRecent(path),
-          onSave: () => active().save(),
-          onSaveAs: () => active().saveAs(),
-          onImport: () => active().importMarkdown(),
-          onExport: () => active().exportFile(),
-          onPrint: () => active().print(),
+          onSave: () => active().run("file.save"),
+          onSaveAs: () => active().run("file.saveAs"),
+          onImport: () => active().run("file.import"),
+          onExport: () => active().run("file.export"),
+          onPrint: () => active().run("file.print"),
         },
   });
 
@@ -104,7 +104,9 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
   async function closeDoc(id: string): Promise<void> {
     const doc = docs.find((d) => d.id === id);
     if (!doc) return;
-    // A tab with no unsaved changes closes at once, with no await.
+    // A tab with no unsaved changes closes at once, with no await. An open
+    // edit counts as a change.
+    doc.handle.flushEdit();
     if (doc.handle.isDirty() && !(await doc.handle.confirmClose())) return;
     // Look the index up again: other tabs can close while the dialog is up.
     const index = docs.indexOf(doc);
@@ -135,6 +137,7 @@ export function createWorkspace(appEl: HTMLElement, initialRoot: MindMapNode, in
       else addDoc(root, path, true);
     },
     async confirmCloseAll() {
+      for (const d of docs) d.handle.flushEdit();
       for (const doc of docs.filter((d) => d.handle.isDirty())) {
         switchTo(doc.id);
         if (!(await doc.handle.confirmClose())) return false;

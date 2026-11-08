@@ -1,3 +1,4 @@
+import { isHexColor } from "./colors";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import type { MindMapNode } from "./model";
@@ -68,7 +69,8 @@ function parseNode(value: unknown, seenIds: Set<string>, depth: number): MindMap
   if (offset && typeof offset.dx === "number" && typeof offset.dy === "number") {
     node.offset = { dx: offset.dx, dy: offset.dy };
   }
-  if (typeof raw.color === "string") node.color = raw.color;
+  // Only #rrggbb: every color is mixed from its hex digits.
+  if (isHexColor(raw.color)) node.color = raw.color;
   if (raw.collapsed === true) node.collapsed = true;
   if (typeof raw.notes === "string") node.notes = raw.notes;
   if (typeof raw.link === "string") node.link = raw.link;

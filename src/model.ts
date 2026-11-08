@@ -192,3 +192,29 @@ export function moveSibling(root: MindMapNode, id: string, direction: -1 | 1): b
   [parent.children[index], parent.children[newIndex]] = [parent.children[newIndex], parent.children[index]];
   return true;
 }
+
+// The children that are drawn: none for a folded node, whose children stay
+// in the data but are hidden from layout, rendering and search.
+export function visibleChildren(node: MindMapNode): MindMapNode[] {
+  return node.collapsed ? [] : node.children;
+}
+
+// Every drawn node, parents before children.
+export function* visibleNodes(node: MindMapNode): Generator<MindMapNode> {
+  yield node;
+  for (const child of visibleChildren(node)) yield* visibleNodes(child);
+}
+
+// The nodes from the root down to `id`, both included, or null if `id` is
+// not in the tree. One walk, where a findParent loop would walk once per
+// ancestor.
+export function pathTo(root: MindMapNode, id: string): MindMapNode[] | null {
+  const path: MindMapNode[] = [];
+  const visit = (node: MindMapNode): boolean => {
+    path.push(node);
+    if (node.id === id || node.children.some(visit)) return true;
+    path.pop();
+    return false;
+  };
+  return visit(root) ? path : null;
+}

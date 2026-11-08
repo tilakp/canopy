@@ -75,11 +75,11 @@ body {
   filter: drop-shadow(0 1px 2px rgb(16 16 20 / 0.05)) drop-shadow(0 4px 12px rgb(16 16 20 / 0.07));
 }
 
+/* Text fills are attributes too (colors.ts), so exports keep them. */
 .mm-root-text {
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.01em;
-  fill: var(--mm-text, #1c1c21);
 }
 
 .mm-branch .mm-node-text {
@@ -90,7 +90,6 @@ body {
 .mm-leaf .mm-node-text {
   font-size: 14px;
   font-weight: 450;
-  fill: var(--mm-text-secondary, #2a2a31);
 }
 
 .mm-underline {

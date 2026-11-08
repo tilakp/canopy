@@ -1,4 +1,6 @@
 import { getFontFamily } from "./fonts";
+import { getTheme } from "./theme";
+import type { Box } from "./camera";
 
 // Exports the live rendered mind map SVG as a standalone image (SVG string
 // or rasterized PNG data URL). "Standalone" matters: the live SVG relies on
@@ -11,12 +13,6 @@ import { getFontFamily } from "./fonts";
 // just inherits it from <body>, which isn't a ".mm-" rule the collector
 // below would pick up, so it's set explicitly instead.
 
-export interface ContentBBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 const MARGIN = 24;
 
@@ -39,7 +35,7 @@ function collectCanvasCss(): string {
   return rules.join("\n");
 }
 
-export function exportSvgString(svgEl: SVGSVGElement, contentBBox: ContentBBox): string {
+export function exportSvgString(svgEl: SVGSVGElement, contentBBox: Box): string {
   const clone = svgEl.cloneNode(true) as SVGSVGElement;
 
   const x = contentBBox.x - MARGIN;
@@ -62,6 +58,18 @@ export function exportSvgString(svgEl: SVGSVGElement, contentBBox: ContentBBox):
   for (const el of clone.querySelectorAll(".mm-fold-btn, .mm-empty-hint, .mm-ring")) el.remove();
   const contentGroup = clone.querySelector(":scope > g");
   contentGroup?.removeAttribute("transform");
+  // A slide or drag in progress moves nodes and lines with transforms; the
+  // image shows where they end.
+  for (const el of clone.querySelectorAll("[transform]")) {
+    if (el.matches(".mm-node, .mm-edge")) el.removeAttribute("transform");
+  }
+  // In dark mode the text is light, so the image needs the dark canvas
+  // behind it to be readable anywhere it is opened.
+  if (getTheme() === "dark") {
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    for (const [k, v] of Object.entries({ x, y, width, height, fill: "#17171a" })) bg.setAttribute(k, String(v));
+    clone.insertBefore(bg, contentGroup ?? null);
+  }
 
   const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
   style.textContent = `svg { font-family: ${getFontFamily()}; }\n${collectCanvasCss()}`;
@@ -73,7 +81,7 @@ export function exportSvgString(svgEl: SVGSVGElement, contentBBox: ContentBBox):
 
 export async function exportPngDataUrl(
   svgEl: SVGSVGElement,
-  contentBBox: ContentBBox,
+  contentBBox: Box,
   scale = 2,
 ): Promise<string> {
   const svgString = exportSvgString(svgEl, contentBBox);

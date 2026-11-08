@@ -4,36 +4,11 @@ export interface HelpHandle {
   isOpen(): boolean;
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["Tab", "Add a child"],
-  ["Enter", "Add a sibling after the selected node"],
-  ["Enter / Tab while typing a new node", "Go on to the next sibling / child"],
-  ["F2, Space or double-click", "Edit the selected node"],
-  ["Esc", "Stop editing (an empty new node is removed)"],
-  ["Delete", "Delete the selected nodes"],
-  ["Arrow keys", "Move the selection (→ also opens a folded branch)"],
-  [".", "Fold or open the selected branch"],
-  ["⌥-click − or a count", "Fold or open every level below"],
-  ["⌥↑ / ⌥↓", "Move the node up / down"],
-  ["Shift+click", "Select more than one node"],
-  ["N / I / L", "Edit notes / icon / link"],
-  ["T", "Cycle the checklist status"],
-  ["⌘V", "Paste an image onto the node"],
-  ["F", "Focus on the selected branch"],
-  ["0", "Zoom to fit"],
-  ["⌘= / ⌘−", "Zoom in / out"],
-  ["⌘K", "Search all commands"],
-  ["Right-click", "Actions for a node, or for the map"],
-  ["⌘F", "Find"],
-  ["⌘Z / ⌘⇧Z", "Undo / redo"],
-  ["⌘S / ⇧⌘S / ⌘O", "Save / Save As / Open"],
-  ["⌘N", "New map (menu bar)"],
-  ["?", "Show or hide this list"],
-];
-
 // A keyboard shortcut list, shown/hidden (not mounted per render) for the
 // same reason as the search bar: renderMindMap() clears only the canvas.
-export function createHelpPanel(container: HTMLElement): HelpHandle {
+// `rows` pairs keys or a gesture with what it does; app.ts builds them from
+// its commands, so the list always matches the real shortcuts.
+export function createHelpPanel(container: HTMLElement, rows: () => [string, string][]): HelpHandle {
   const el = document.createElement("div");
   el.className = "mm-help";
   el.hidden = true;
@@ -44,19 +19,25 @@ export function createHelpPanel(container: HTMLElement): HelpHandle {
   el.appendChild(title);
 
   const list = document.createElement("dl");
-  for (const [keys, action] of SHORTCUTS) {
-    const dt = document.createElement("dt");
-    dt.textContent = keys;
-    const dd = document.createElement("dd");
-    dd.textContent = action;
-    list.append(dt, dd);
-  }
+  const fill = () => {
+    list.replaceChildren();
+    for (const [keys, action] of rows()) {
+      const dt = document.createElement("dt");
+      dt.textContent = keys;
+      const dd = document.createElement("dd");
+      dd.textContent = action;
+      list.append(dt, dd);
+    }
+  };
   el.appendChild(list);
   el.addEventListener("click", () => (el.hidden = true));
   container.appendChild(el);
 
   return {
-    toggle: () => (el.hidden = !el.hidden),
+    toggle() {
+      if (el.hidden) fill();
+      el.hidden = !el.hidden;
+    },
     close: () => (el.hidden = true),
     isOpen: () => !el.hidden,
   };

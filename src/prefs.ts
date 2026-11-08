@@ -1,4 +1,4 @@
-import type { EdgeStyle } from "./render";
+import type { EdgeStyle } from "./edges";
 
 // View preferences shared by every open map, set from the View popover or
 // the command palette: line style, hand-drawn style, the dot grid and the

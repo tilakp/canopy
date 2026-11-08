@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPalette, filterCommands, type Command } from "./palette";
+import { createPalette, filterCommands } from "./palette";
+import type { Command } from "./commands";
 
-const cmd = (label: string, run = () => {}): Command => ({ label, group: "Test", run });
+const cmd = (label: string, run = () => {}): Command => ({ id: label, label, group: "Map", run });
 
 describe("filterCommands", () => {
   const commands = [cmd("Zoom to fit"), cmd("Fold branch"), cmd("Focus on branch"), cmd("Font: Serif")];
