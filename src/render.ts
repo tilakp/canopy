@@ -2,7 +2,7 @@ import rough from "roughjs";
 import type { RoughSVG } from "roughjs/bin/svg";
 import { countDescendants, findNode, findParent, type MindMapNode } from "./model";
 import { computeLayout, type Edge, type NodeLayout, type NodeSize } from "./layout";
-import { wrapText, type WrappedText } from "./textwrap";
+import { measureText, wrapText, type WrappedText } from "./textwrap";
 import { getTheme } from "./theme";
 import { getFontFamily } from "./fonts";
 
@@ -1096,18 +1096,43 @@ function renderEditOverlay(
     input.style.borderBottom = `2px solid ${lineColor(layout.color)}`;
   }
 
+  // A deeper idea's editor has a 2px underline (a bottom border), which
+  // takes room from the text unless the box grows by it.
+  const underline = tier === "leaf" ? 2 : 0;
   const fit = () => {
-    const wrapped = wrapText(input.value || " ", fontString(style), fixedTextWidth ?? style.maxTextWidth);
-    const width = Math.max(wrapped.width, fixedTextWidth ?? MIN_EDIT_TEXT_WIDTH) + style.paddingX * 2;
-    const height = wrapped.lines.length * style.lineHeight + style.paddingY * 2;
+    const font = fontString(style);
+    const limit = fixedTextWidth ?? style.maxTextWidth;
+    const wrapped = wrapText(input.value || " ", font, limit);
+    let lineCount = wrapped.lines.length;
+    let textWidth = wrapped.width;
+    // wrapText leaves out a space at the end, but the textarea keeps it,
+    // and with no room for it the cursor after it drops to the next line
+    // until the next letter is typed. So the space counts here: on this
+    // line if it fits, else as a new line, where the next word goes.
+    if (input.value.trim() && /\s$/.test(input.value)) {
+      const withSpace = measureText(`${wrapped.lines[lineCount - 1]} `, font);
+      if (withSpace <= limit) textWidth = Math.max(textWidth, withSpace);
+      else lineCount += 1;
+    }
+    const width = Math.max(textWidth, fixedTextWidth ?? MIN_EDIT_TEXT_WIDTH) + style.paddingX * 2;
+    const height = lineCount * style.lineHeight + style.paddingY * 2;
     // +1px: the textarea wraps on its own, and a subpixel rounding
     // difference must not push the last word onto a new line.
     input.style.width = `${width * scale + 1}px`;
-    input.style.height = `${height * scale}px`;
+    input.style.height = `${height * scale + underline}px`;
   };
   input.addEventListener("input", () => {
-    // A title is one line of text that wraps; pasted line breaks become spaces.
-    if (input.value.includes("\n")) input.value = input.value.replace(/\s*\n\s*/g, " ");
+    // A title is one line of text that wraps. The node shows no line
+    // breaks, no leading space and no runs of spaces, so the editor
+    // doesn't either: otherwise its text wraps where the measured box
+    // says it shouldn't.
+    const tidy = (text: string) => text.replace(/\s*\n\s*/g, " ").replace(/^\s+/, "").replace(/ {2,}/g, " ");
+    const value = tidy(input.value);
+    if (value !== input.value) {
+      const caret = tidy(input.value.slice(0, input.selectionStart ?? input.value.length)).length;
+      input.value = value;
+      input.setSelectionRange(caret, caret);
+    }
     fit();
   });
   fit();

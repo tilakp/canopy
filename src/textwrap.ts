@@ -32,6 +32,11 @@ function measureWidth(text: string, font: string): number {
   }
 }
 
+// The width of `text` as drawn in `font`, spaces included.
+export function measureText(text: string, font: string): number {
+  return measureWidth(text, font);
+}
+
 // Greedily wraps `text` into lines no wider than `maxWidth` when rendered
 // with `font` (a CSS font shorthand, e.g. "500 14.5px sans-serif").
 export function wrapText(text: string, font: string, maxWidth: number): WrappedText {

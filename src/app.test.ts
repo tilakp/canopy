@@ -989,3 +989,37 @@ describe("menus, the node toolbar and the command palette", () => {
     expect(child.children.map((c) => c.text)).toEqual(["New idea"]);
   });
 });
+
+describe("the title editor while typing", () => {
+  function openEditor(): HTMLTextAreaElement {
+    const { root, child } = buildTree();
+    startApp(container, root);
+    fireClick(nodeEl(container, child.id), 100, 100, 0);
+    fireKey("F2");
+    return container.querySelector<HTMLTextAreaElement>("textarea.mm-edit-input")!;
+  }
+
+  function type(input: HTMLTextAreaElement, value: string) {
+    input.value = value;
+    input.setSelectionRange(value.length, value.length);
+    input.dispatchEvent(new Event("input"));
+  }
+
+  it("makes room for a space typed at the end, so the cursor stays on the line", () => {
+    const input = openEditor();
+    type(input, "Plan");
+    const without = parseFloat(input.style.width);
+    type(input, "Plan ");
+    expect(parseFloat(input.style.width)).toBeGreaterThan(without);
+    const height = input.style.height;
+    type(input, "Plan t");
+    expect(input.style.height).toBe(height);
+  });
+
+  it("keeps out a leading space and runs of spaces, which the node would not show", () => {
+    const input = openEditor();
+    type(input, "  Plan  the");
+    expect(input.value).toBe("Plan the");
+    expect(input.selectionStart).toBe("Plan the".length);
+  });
+});
